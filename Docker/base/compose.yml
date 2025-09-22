@@ -1,0 +1,20 @@
+services: 
+  drone-capstone:
+    container_name: drone-capstone
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - /dev:/dev
+      - /var/run/docker.sock:/var/run/docker.sock
+      - type: bind
+        source: ../../../drone-capstone
+        target: /drone-capstone
+    image: "mcgillrobotics/drone_capstone:base" 
+    privileged: true
+    environment:
+      - DISPLAY
+      - QT_X11_NO_MITSHM=1
+      - UDEV=on
+    command: bash -c ${OVERRIDE_COMMAND:-"tail -f /dev/null"}
+    build: .
+    tty: true
+    network_mode: host
