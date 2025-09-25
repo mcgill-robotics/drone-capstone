@@ -18,11 +18,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     ros-humble-desktop \
     ros-humble-librealsense2* \
+    ros-humble-mavros \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt \
     && rm -f /usr/local/bin/cmake && rm -rf /root/.cache/pip && rm requirements.txt
+
+RUN wget https://raw.githubusercontent.com/mavlink/mavros/ros2/mavros/scripts/install_geographiclib_datasets.sh && \
+    chmod +x install_geographiclib_datasets.sh && \
+    ./install_geographiclib_datasets.sh && \
+    rm install_geographiclib_datasets.sh
 
 RUN echo "source /opt/ros/$ROS_DISTRO/setup.bash" >> ~/.bashrc
 
