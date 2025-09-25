@@ -5,8 +5,3 @@ torch
 torchvision
 opencv-python
 colcon-core
-cv_bridge
-image_transport
-tf_transformations
-scikit-image
-pillow
