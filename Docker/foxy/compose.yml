@@ -1,7 +1,7 @@
 services:
-  t265-humble-new:
+  t265-foxy:
     build: .
-    container_name: t265-humble-new
+    container_name: t265-foxy
     network_mode: host
     volumes:
       - "/dev:/dev"
