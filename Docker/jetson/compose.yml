@@ -1,0 +1,14 @@
+services:
+  t265-jetson:
+    build: .
+    container_name: t265-jetson
+    network_mode: host
+    volumes:
+      - "/dev:/dev"
+    device_cgroup_rules:
+      - "c 81:* rmw"
+      - "c 189:* rmw"
+    command: /bin/bash -c "source /ros2_ws/install/setup.bash && ros2 launch realsense2_camera rs_launch.py"
+    restart: unless-stopped
+    environment:
+      - DISPLAY=$DISPLAY
