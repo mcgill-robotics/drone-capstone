@@ -4,11 +4,28 @@ services:
     container_name: t265-jetson
     network_mode: host
     volumes:
-      - "/dev:/dev"
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - /dev:/dev
+      - /var/run/docker.sock:/var/run/docker.sock
+      - type: bind
+        source: ../../../drone-capstone
+        target: /drone-capstone
+    image: "mcgillrobotics/drone_capstone:jetson" 
     device_cgroup_rules:
       - "c 81:* rmw"
       - "c 189:* rmw"
-    command: /bin/bash -c "source /ros2_ws/install/setup.bash && ros2 launch realsense2_camera rs_launch.py"
+    command: bash -c ${OVERRIDE_COMMAND:-"tail -f /dev/null"}
     restart: unless-stopped
     environment:
       - DISPLAY=$DISPLAY
+      - QT_X11_NO_MITSHM=1
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - NVIDIA_VISIBLE_DEVICES=all
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
