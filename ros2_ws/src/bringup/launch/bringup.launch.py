@@ -6,7 +6,7 @@ from ament_index_python.packages import get_package_share_directory
 import os
 
 def generate_launch_description():
-    # Include the standard RealSense T265 launch
+    # --- RealSense T265 ---
     realsense_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
@@ -20,11 +20,10 @@ def generate_launch_description():
             'device_type': 't265',
             'enable_fisheye1': 'true',
             'enable_fisheye2': 'true',
-            # add/override other params here if you want
-        }.items()
+        }.items(),
     )
 
-    # image_proc for fisheye1
+    # --- image_proc for fisheye1 ---
     fisheye1_proc = Node(
         package='image_proc',
         executable='image_proc',
@@ -32,11 +31,16 @@ def generate_launch_description():
         namespace='camera/fisheye1',
         output='screen',
         remappings=[
-            ('image', 'image_raw'),
+            ('image', 'image_raw'),        # relative to namespace
+            ('camera_info', 'camera_info'),
+            ('image_rect', 'image_rect'),
         ],
+        parameters=[{
+            'queue_size': 60,
+        }],
     )
 
-    # image_proc for fisheye2
+    # --- image_proc for fisheye2 ---
     fisheye2_proc = Node(
         package='image_proc',
         executable='image_proc',
@@ -44,12 +48,20 @@ def generate_launch_description():
         namespace='camera/fisheye2',
         output='screen',
         remappings=[
-            ('image', 'image_raw'),
+            ('image', 'image_raw'),        # relative to namespace
+            ('camera_info', 'camera_info'),
+            ('image_rect', 'image_rect'),
         ],
+        parameters=[{
+            'queue_size': 60,
+        }],
     )
+
 
     return LaunchDescription([
         realsense_launch,
         fisheye1_proc,
         fisheye2_proc,
+        # apriltag_node_1,
+        # apriltag_node_2
     ])
