@@ -42,6 +42,16 @@ RUN apt-get update -qq && \
         python3-colcon-common-extensions \
         python3-rosdep \
         python3-vcstool \
+        ros-${ROS_DISTRO}-ament-cmake-python \
+        ros-${ROS_DISTRO}-rosidl-default-generators \
+        ros-${ROS_DISTRO}-rosidl-generator-cpp \
+        ros-${ROS_DISTRO}-rosidl-generator-py \
+        ros-${ROS_DISTRO}-ament-cmake \
+        ros-${ROS_DISTRO}-rosidl-cmake \
+        ros-${ROS_DISTRO}-ament-lint-auto \
+        ros-${ROS_DISTRO}-ament-lint-common \
+        ros-${ROS_DISTRO}-mavros-msgs \
+        ros-${ROS_DISTRO}-diagnostic-updater \
     && rm -rf /var/lib/apt/lists/*
 
 # (Optional but usually helpful)
@@ -71,6 +81,7 @@ RUN cd /tmp && \
 # (Assumes drone-capstone has a ros2_ws with correct package.xml/CMakeLists.txt)
 RUN git clone https://github.com/mcgill-robotics/drone-capstone /drone-capstone && \
     cd /drone-capstone/ros2_ws && \
+    source /opt/ros/humble/setup.bash \
     # If you need additional deps, you can uncomment the rosdep line:
     # rosdep install --from-paths src --ignore-src -r -y && \
     colcon build
