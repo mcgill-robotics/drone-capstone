@@ -1,6 +1,6 @@
 # drone-capstone
 
-## Utilized repos
+## Utilized Repos
 - https://github.com/ros-perception/image_common -humble
 - https://github.com/ros-perception/image_pipeline -humble
 - https://github.com/ros-perception/vision_opencv (not sure which version)
