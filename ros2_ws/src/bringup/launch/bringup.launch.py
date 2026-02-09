@@ -57,11 +57,28 @@ def generate_launch_description():
         }],
     )
 
+    # --- AprilTag node for fisheye1 ---
+    apriltag_node_2 = Node(
+        package='apriltag_ros',
+        executable='apriltag_node',
+        name='apriltag_fisheye2',
+        output='screen',
+        remappings=[
+            ('image_rect', '/camera/fisheye2/image_rect'),
+            ('camera_info', '/camera/fisheye2/camera_info'),
+        ],
+        parameters=[
+            os.path.join(
+                get_package_share_directory('apriltag_ros'),
+                'cfg',
+                'tags_36h11.yaml'
+            )
+        ],
+    )
+
 
     return LaunchDescription([
         realsense_launch,
-        fisheye1_proc,
         fisheye2_proc,
-        # apriltag_node_1,
-        # apriltag_node_2
+        apriltag_node_2
     ])
