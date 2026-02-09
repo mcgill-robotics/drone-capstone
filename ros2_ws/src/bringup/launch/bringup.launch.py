@@ -18,7 +18,7 @@ def generate_launch_description():
         launch_arguments={
             'camera_name': 'camera',
             'device_type': 't265',
-            'enable_fisheye1': 'false',
+            'enable_fisheye1': 'true',
             'enable_fisheye2': 'true',
         }.items(),
     )
