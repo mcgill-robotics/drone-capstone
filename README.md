@@ -16,10 +16,10 @@ xhost +local:docker
 
 ## Usage
 ```bash
+cd drone_capstone
 cd ros2_ws
 colcon build
 source install/setup.bash
 ros2 launch bringup bringup.launch.py
-ros2 run apriltag_ros apriltag_node --ros-args     -r image_rect:=/camera/fisheye1/image_rect     -r camera_info:=/camera/fisheye1/camera_info     --params-file `ros2 pkg prefix apriltag_ros`/share/apriltag_ros/cfg/tags_36h11.yaml
 ros2 topic echo /detections
 ```
