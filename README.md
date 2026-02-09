@@ -9,6 +9,11 @@
 - https://github.com/christianrauch/apriltag_msgs -2.0.1
 - https://github.com/AprilRobotics/apriltag -v3.4.5
 
+## Jetson Command
+```bash
+xhost +local:docker
+```
+
 ## Usage
 ```bash
 cd ros2_ws
