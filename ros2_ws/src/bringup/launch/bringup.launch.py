@@ -18,26 +18,9 @@ def generate_launch_description():
         launch_arguments={
             'camera_name': 'camera',
             'device_type': 't265',
-            'enable_fisheye1': 'true',
+            'enable_fisheye1': 'false',
             'enable_fisheye2': 'true',
         }.items(),
-    )
-
-    # --- image_proc for fisheye1 ---
-    fisheye1_proc = Node(
-        package='image_proc',
-        executable='image_proc',
-        name='image_proc_fisheye1',
-        namespace='camera/fisheye1',
-        output='screen',
-        remappings=[
-            ('image', 'image_raw'),        # relative to namespace
-            ('camera_info', 'camera_info'),
-            ('image_rect', 'image_rect'),
-        ],
-        parameters=[{
-            'queue_size': 60,
-        }],
     )
 
     # --- image_proc for fisheye2 ---
