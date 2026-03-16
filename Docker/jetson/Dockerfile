@@ -54,6 +54,20 @@ RUN apt-get update -qq && \
         ros-${ROS_DISTRO}-diagnostic-updater \
     && rm -rf /var/lib/apt/lists/*
 
+# Install required pip packages
+RUN pip install setuptools
+
+# Build agent for PX4
+RUN cd /tmp && \
+    git clone -b v2.4.3 https://github.com/eProsima/Micro-XRCE-DDS-Agent.git && \
+    cd Micro-XRCE-DDS-Agent && \
+    mkdir build && cd build && \
+    cmake .. && \
+    make -j"$(nproc)" && \
+    make install && \
+    ldconfig /usr/local/lib/ && \
+    cd / && rm -rf /tmp/Micro-XRCE-DDS-Agent
+
 # (Optional but usually helpful)
 # Initialize rosdep (inside the image, one-time)
 RUN rosdep init 2>/dev/null || true && \
