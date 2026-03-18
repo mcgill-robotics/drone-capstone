@@ -1,5 +1,5 @@
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription
+from launch.actions import IncludeLaunchDescription, ExecuteProcess
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
@@ -74,9 +74,20 @@ def generate_launch_description():
         }],
     )
 
+    microxrce_agent = ExecuteProcess(
+        cmd=[
+            'MicroXRCEAgent',
+            'serial',
+            '--dev', '/dev/ttyTHS1',
+            '-b', '921600'
+        ],
+        output='screen'
+    )
+
     return LaunchDescription([
         realsense_launch,
         fisheye2_proc,
         apriltag_node_2,
         tag_pose_node,
+        microxrce_agent,
     ])

@@ -11,6 +11,7 @@ services:
         source: ../../../drone-capstone
         target: /drone-capstone
     image: "mcgillrobotics/drone_capstone:jetson" 
+    privileged: true
     device_cgroup_rules:
       - "c 81:* rmw"
       - "c 189:* rmw"
