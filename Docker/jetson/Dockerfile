@@ -5,7 +5,12 @@ FROM dustynv/ros:humble-desktop-l4t-r36.4.0
 ENV DEBIAN_FRONTEND=noninteractive \
     ROS_DISTRO=humble \
     LANG=C.UTF-8 \
-    LC_ALL=C.UTF-8
+    LC_ALL=C.UTF-8 \
+    PIP_INDEX_URL=https://pypi.org/simple \
+    PIP_EXTRA_INDEX_URL=
+
+# Remove Jetson pip override
+RUN rm -rf /root/.config/pip || true
 
 # NOTE: don't force OpenCV_DIR here — let CMake find the one that comes with the image
 # (it’s already compiled against CUDA 12 inside this base image)
@@ -55,7 +60,7 @@ RUN apt-get update -qq && \
     && rm -rf /var/lib/apt/lists/*
 
 # Install required pip packages
-RUN pip install setuptools
+RUN pip3 install --upgrade pip pyros-genmsg setuptools
 
 # Build agent for PX4
 RUN cd /tmp && \
@@ -111,6 +116,12 @@ RUN echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0b37", M
 
 # Use bash for later RUNs
 SHELL ["/bin/bash", "-c"]
+
+RUN cd /root && \
+    git clone https://github.com/PX4/PX4-Autopilot.git --recursive && \
+    cd PX4-Autopilot && \
+    bash ./Tools/setup/ubuntu.sh && \
+    make px4_sitl
 
 # Shell setup for ROS + workspace
 RUN echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc && \
