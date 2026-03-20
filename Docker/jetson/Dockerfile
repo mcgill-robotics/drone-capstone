@@ -62,6 +62,7 @@ RUN apt-get update -qq && \
         ros-${ROS_DISTRO}-image-transport \
         ros-humble-yaml-cpp-vendor \
         ros-humble-camera-calibration-parsers \
+        ros-humble-ament-cmake-* \
     && rm -rf /var/lib/apt/lists/*
 
 # Install required pip packages
