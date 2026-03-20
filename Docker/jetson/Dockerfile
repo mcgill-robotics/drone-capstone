@@ -58,6 +58,8 @@ RUN apt-get update -qq && \
         ros-${ROS_DISTRO}-mavros-msgs \
         ros-${ROS_DISTRO}-diagnostic-updater \
         ros-${ROS_DISTRO}-message-filters \
+        ros-${ROS_DISTRO}-pluginlib \
+        ros-${ROS_DISTRO}-image-transport \
     && rm -rf /var/lib/apt/lists/*
 
 # Install required pip packages
