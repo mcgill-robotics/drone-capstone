@@ -57,6 +57,7 @@ RUN apt-get update -qq && \
         ros-${ROS_DISTRO}-ament-lint-common \
         ros-${ROS_DISTRO}-mavros-msgs \
         ros-${ROS_DISTRO}-diagnostic-updater \
+        ros-${ROS_DISTRO}-message-filters \
     && rm -rf /var/lib/apt/lists/*
 
 # Install required pip packages
