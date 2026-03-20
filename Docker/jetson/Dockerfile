@@ -60,6 +60,8 @@ RUN apt-get update -qq && \
         ros-${ROS_DISTRO}-message-filters \
         ros-${ROS_DISTRO}-pluginlib \
         ros-${ROS_DISTRO}-image-transport \
+        ros-humble-yaml-cpp-vendor \
+        ros-humble-camera-calibration-parsers \
     && rm -rf /var/lib/apt/lists/*
 
 # Install required pip packages
