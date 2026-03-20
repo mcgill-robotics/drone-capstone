@@ -120,6 +120,7 @@ SHELL ["/bin/bash", "-c"]
 RUN cd /root && \
     git clone https://github.com/PX4/PX4-Autopilot.git --recursive && \
     cd PX4-Autopilot && \
+    sed -i 's/.*opencv.*/# &/' Tools/setup/ubuntu.sh && \
     bash ./Tools/setup/ubuntu.sh && \
     make px4_sitl
 
