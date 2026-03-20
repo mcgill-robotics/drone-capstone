@@ -64,6 +64,7 @@ RUN apt-get update -qq && \
         ros-humble-camera-calibration-parsers \
         ros-humble-ament-cmake-* \
         ros-humble-rclcpp-components \
+        ros-humble-tf2-* \
     && rm -rf /var/lib/apt/lists/*
 
 # Install required pip packages
