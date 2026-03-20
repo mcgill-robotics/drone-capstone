@@ -104,6 +104,25 @@ RUN cd /tmp && \
     make install && \
     cd / && rm -rf /tmp/librealsense-2.53.1 /tmp/v2.53.1.tar.gz
 
+RUN apt-get update && apt-get install -y \
+    libopencv-dev \
+    python3-opencv \
+    python3-rospkg-modules \
+    ros-humble-stereo-msgs \
+    ros-humble-librealsense2 \
+    ros-humble-nav-msgs \
+    ros-humble-ros-environment \
+    ros-humble-launch-ros \
+    ros-humble-launch \
+    ros-humble-std-srvs \
+    ros-humble-launch-testing \
+    ros-humble-launch-testing-ament-cmake \
+    ros-humble-ros-testing \
+    ros-humble-camera-ros \
+    ros-humble-image-transport-plugins \
+    ros-humble-xacro \
+ && rm -rf /var/lib/apt/lists/*
+
 # Clone and build your ROS workspace
 # (Assumes drone-capstone has a ros2_ws with correct package.xml/CMakeLists.txt)
 RUN git clone https://github.com/mcgill-robotics/drone-capstone /drone-capstone && \
