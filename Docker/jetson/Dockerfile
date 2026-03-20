@@ -23,6 +23,8 @@ RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
 # IMPORTANT: we only install *generic* and *non-OpenCV* packages here.
 # ROS "desktop" stuff is already included in the base image, so we don't re-install ROS debs
 RUN apt-get update -qq && \
+    apt-get remove -y opencv-dev opencv-libs 'libopencv*' || true && \
+    apt-get autoremove -y && \
     apt-get install -y -qq --no-install-recommends \
         git \
         tmux \
@@ -65,6 +67,20 @@ RUN apt-get update -qq && \
         ros-humble-ament-cmake-* \
         ros-humble-rclcpp-components \
         ros-humble-tf2-* \
+        python3-rospkg-modules \
+        ros-humble-stereo-msgs \
+        ros-humble-librealsense2 \
+        ros-humble-nav-msgs \
+        ros-humble-ros-environment \
+        ros-humble-launch-ros \
+        ros-humble-launch \
+        ros-humble-std-srvs \
+        ros-humble-launch-testing \
+        ros-humble-launch-testing-ament-cmake \
+        ros-humble-ros-testing \
+        ros-humble-camera-ros \
+        ros-humble-image-transport-plugins \
+        ros-humble-xacro \
     && rm -rf /var/lib/apt/lists/*
 
 # Install required pip packages
@@ -103,28 +119,6 @@ RUN cd /tmp && \
     make -j"$(nproc)" && \
     make install && \
     cd / && rm -rf /tmp/librealsense-2.53.1 /tmp/v2.53.1.tar.gz
-
-RUN apt-get update && \
-    apt-get remove -y opencv-dev opencv-libs 'libopencv*' || true && \
-    apt-get autoremove -y && \
-    rm -rf /var/lib/apt/lists/*
-
-RUN apt-get update -qq && apt-get install -y -qq \
-    python3-rospkg-modules \
-    ros-humble-stereo-msgs \
-    ros-humble-librealsense2 \
-    ros-humble-nav-msgs \
-    ros-humble-ros-environment \
-    ros-humble-launch-ros \
-    ros-humble-launch \
-    ros-humble-std-srvs \
-    ros-humble-launch-testing \
-    ros-humble-launch-testing-ament-cmake \
-    ros-humble-ros-testing \
-    ros-humble-camera-ros \
-    ros-humble-image-transport-plugins \
-    ros-humble-xacro \
- && rm -rf /var/lib/apt/lists/*
 
 # Clone and build your ROS workspace
 # (Assumes drone-capstone has a ros2_ws with correct package.xml/CMakeLists.txt)
