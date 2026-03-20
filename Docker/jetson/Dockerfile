@@ -110,7 +110,7 @@ RUN git clone https://github.com/mcgill-robotics/drone-capstone /drone-capstone 
     cd /drone-capstone/ros2_ws && \
     source /opt/ros/humble/setup.bash && \
     # If you need additional deps, you can uncomment the rosdep line:
-    # rosdep install --from-paths src --ignore-src -r -y && \
+    rosdep install --from-paths src --ignore-src -r -y && \
     colcon build
 
 # udev rules for RealSense cameras
