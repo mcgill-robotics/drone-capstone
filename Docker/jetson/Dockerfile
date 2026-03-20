@@ -105,8 +105,6 @@ RUN cd /tmp && \
     cd / && rm -rf /tmp/librealsense-2.53.1 /tmp/v2.53.1.tar.gz
 
 RUN apt-get update && apt-get install -y \
-    libopencv-dev \
-    python3-opencv \
     python3-rospkg-modules \
     ros-humble-stereo-msgs \
     ros-humble-librealsense2 \
