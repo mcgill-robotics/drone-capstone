@@ -12,18 +12,16 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # Remove Jetson pip override
 RUN rm -rf /root/.config/pip || true
 
-# NOTE: don't force OpenCV_DIR here — let CMake find the one that comes with the image
-# (it’s already compiled against CUDA 12 inside this base image)
-
-# GPG key update for ROS (kept as you had it)
+# GPG key update for ROS
 RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
     -o /usr/share/keyrings/ros-archive-keyring.gpg
 
 # Install apt packages
-# IMPORTANT: we only install *generic* and *non-OpenCV* packages here.
-# ROS "desktop" stuff is already included in the base image, so we don't re-install ROS debs
 RUN apt-get update -qq && \
+    apt-get remove -y opencv-dev opencv-libs opencv-main 'libopencv*' || true && \
+    apt-get autoremove -y && \
     apt-get install -y -qq --no-install-recommends \
+        -o Dpkg::Options::="--force-overwrite" \
         git \
         tmux \
         vim \
@@ -34,7 +32,6 @@ RUN apt-get update -qq && \
         python3-pip \
         wget \
         curl \
-        # RealSense / USB deps
         udev \
         libusb-1.0-0-dev \
         libusb-1.0-0 \
@@ -43,7 +40,6 @@ RUN apt-get update -qq && \
         libgtk-3-0 \
         libglfw3-dev \
         libglfw3 \
-        # Colcon / build tooling
         python3-colcon-common-extensions \
         python3-rosdep \
         python3-vcstool \
@@ -57,12 +53,34 @@ RUN apt-get update -qq && \
         ros-${ROS_DISTRO}-ament-lint-common \
         ros-${ROS_DISTRO}-mavros-msgs \
         ros-${ROS_DISTRO}-diagnostic-updater \
+        ros-${ROS_DISTRO}-message-filters \
+        ros-${ROS_DISTRO}-pluginlib \
+        ros-${ROS_DISTRO}-image-transport \
+        ros-humble-yaml-cpp-vendor \
+        ros-humble-camera-calibration-parsers \
+        ros-humble-ament-cmake-* \
+        ros-humble-rclcpp-components \
+        ros-humble-tf2-* \
+        python3-rospkg-modules \
+        ros-humble-stereo-msgs \
+        ros-humble-librealsense2 \
+        ros-humble-nav-msgs \
+        ros-humble-ros-environment \
+        ros-humble-launch-ros \
+        ros-humble-launch \
+        ros-humble-std-srvs \
+        ros-humble-launch-testing \
+        ros-humble-launch-testing-ament-cmake \
+        ros-humble-ros-testing \
+        ros-humble-camera-ros \
+        ros-humble-image-transport-plugins \
+        ros-humble-xacro \
     && rm -rf /var/lib/apt/lists/*
 
 # Install required pip packages
 RUN pip3 install --upgrade pip pyros-genmsg setuptools
 
-# Build agent for PX4
+# Build Micro-XRCE-DDS-Agent for PX4
 RUN cd /tmp && \
     git clone -b v2.4.3 https://github.com/eProsima/Micro-XRCE-DDS-Agent.git && \
     cd Micro-XRCE-DDS-Agent && \
@@ -73,13 +91,11 @@ RUN cd /tmp && \
     ldconfig /usr/local/lib/ && \
     cd / && rm -rf /tmp/Micro-XRCE-DDS-Agent
 
-# (Optional but usually helpful)
-# Initialize rosdep (inside the image, one-time)
+# Initialize rosdep
 RUN rosdep init 2>/dev/null || true && \
     rosdep update
 
 # Build librealsense 2.53.1 (T265 last working version)
-# We DISABLE examples to avoid any hard dependency on OpenCV here.
 RUN cd /tmp && \
     wget https://github.com/IntelRealSense/librealsense/archive/refs/tags/v2.53.1.tar.gz && \
     tar -xzf v2.53.1.tar.gz && \
@@ -96,12 +112,10 @@ RUN cd /tmp && \
     make install && \
     cd / && rm -rf /tmp/librealsense-2.53.1 /tmp/v2.53.1.tar.gz
 
-# Clone and build your ROS workspace
-# (Assumes drone-capstone has a ros2_ws with correct package.xml/CMakeLists.txt)
+# Clone and build ROS workspace
 RUN git clone https://github.com/mcgill-robotics/drone-capstone /drone-capstone && \
     cd /drone-capstone/ros2_ws && \
     source /opt/ros/humble/setup.bash && \
-    # If you need additional deps, you can uncomment the rosdep line:
     # rosdep install --from-paths src --ignore-src -r -y && \
     colcon build
 
@@ -117,6 +131,7 @@ RUN echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0b37", M
 # Use bash for later RUNs
 SHELL ["/bin/bash", "-c"]
 
+# Build PX4 SITL (strip any stray opencv refs from the setup script first)
 RUN cd /root && \
     git clone https://github.com/PX4/PX4-Autopilot.git --recursive && \
     cd PX4-Autopilot && \
@@ -124,7 +139,7 @@ RUN cd /root && \
     bash ./Tools/setup/ubuntu.sh && \
     make px4_sitl
 
-# Shell setup for ROS + workspace
+# Shell setup
 RUN echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc && \
     echo "source /drone-capstone/ros2_ws/install/setup.bash" >> ~/.bashrc && \
     echo "export ROS_DOMAIN_ID=0" >> ~/.bashrc && \
