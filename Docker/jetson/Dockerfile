@@ -123,13 +123,12 @@ RUN cd /tmp && \
     cd / && rm -rf /tmp/drone-capstone
 
 # Build PX4 SITL (strip any stray opencv refs from the setup script first)
-RUN cd /tmp && \
-    git clone https://github.com/mcgill-robotics/drone-capstone && \
-    cd drone-capstone/PX4-Autopilot && \
+RUN cd / && \
+    git clone https://github.com/mcgill-robotics/PX4-Autopilot.git --recursive && \
+    cd PX4-Autopilot && \
     sed -i 's/libopencv[^ ]*//g' Tools/setup/ubuntu.sh && \
     bash ./Tools/setup/ubuntu.sh && \
-    make px4_sitl && \
-    cd / && rm -rf /tmp/drone-capstone
+    make px4_sitl
 
 # udev rules for RealSense cameras
 RUN echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0b37", MODE="0666", GROUP="plugdev"' > /etc/udev/rules.d/99-realsense-libusb.rules && \
