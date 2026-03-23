@@ -43,6 +43,7 @@ RUN apt-get update -qq && \
         python3-colcon-common-extensions \
         python3-rosdep \
         python3-vcstool \
+        python3-rospkg-modules \
         ros-${ROS_DISTRO}-ament-cmake-python \
         ros-${ROS_DISTRO}-rosidl-default-generators \
         ros-${ROS_DISTRO}-rosidl-generator-cpp \
@@ -56,25 +57,25 @@ RUN apt-get update -qq && \
         ros-${ROS_DISTRO}-message-filters \
         ros-${ROS_DISTRO}-pluginlib \
         ros-${ROS_DISTRO}-image-transport \
-        ros-humble-yaml-cpp-vendor \
-        ros-humble-camera-calibration-parsers \
-        ros-humble-ament-cmake-* \
-        ros-humble-rclcpp-components \
-        ros-humble-tf2-* \
-        python3-rospkg-modules \
-        ros-humble-stereo-msgs \
-        ros-humble-librealsense2 \
-        ros-humble-nav-msgs \
-        ros-humble-ros-environment \
-        ros-humble-launch-ros \
-        ros-humble-launch \
-        ros-humble-std-srvs \
-        ros-humble-launch-testing \
-        ros-humble-launch-testing-ament-cmake \
-        ros-humble-ros-testing \
-        ros-humble-camera-ros \
-        ros-humble-image-transport-plugins \
-        ros-humble-xacro \
+        ros-${ROS_DISTRO}-yaml-cpp-vendor \
+        ros-${ROS_DISTRO}-camera-calibration-parsers \
+        ros-${ROS_DISTRO}-ament-cmake-* \
+        ros-${ROS_DISTRO}-rclcpp-components \
+        ros-${ROS_DISTRO}-tf2-* \
+        ros-${ROS_DISTRO}-stereo-msgs \
+        ros-${ROS_DISTRO}-librealsense2 \
+        ros-${ROS_DISTRO}-nav-msgs \
+        ros-${ROS_DISTRO}-ros-environment \
+        ros-${ROS_DISTRO}-launch-ros \
+        ros-${ROS_DISTRO}-launch \
+        ros-${ROS_DISTRO}-std-srvs \
+        ros-${ROS_DISTRO}-launch-testing \
+        ros-${ROS_DISTRO}-launch-testing-ament-cmake \
+        ros-${ROS_DISTRO}-ros-testing \
+        ros-${ROS_DISTRO}-camera-ros \
+        ros-${ROS_DISTRO}-image-transport-plugins \
+        ros-${ROS_DISTRO}-xacro \
+        ros-${ROS_DISTRO}-ros-gz \
     && rm -rf /var/lib/apt/lists/*
 
 # Install required pip packages
@@ -113,31 +114,33 @@ RUN cd /tmp && \
     cd / && rm -rf /tmp/librealsense-2.53.1 /tmp/v2.53.1.tar.gz
 
 # Clone and build ROS workspace
-RUN git clone https://github.com/mcgill-robotics/drone-capstone /drone-capstone && \
-    cd /drone-capstone/ros2_ws && \
+RUN cd /tmp && \
+    git clone https://github.com/mcgill-robotics/drone-capstone && \
     source /opt/ros/humble/setup.bash && \
-    # rosdep install --from-paths src --ignore-src -r -y && \
-    colcon build
-
-# udev rules for RealSense cameras
-RUN echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0b37", MODE="0666", GROUP="plugdev"' > /etc/udev/rules.d/99-realsense-libusb.rules && \
-    echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0ad1", MODE="0666", GROUP="plugdev"' >> /etc/udev/rules.d/99-realsense-libusb.rules && \
-    echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0ad2", MODE="0666", GROUP="plugdev"' >> /etc/udev/rules.d/99-realsense-libusb.rules && \
-    echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0ad3", MODE="0666", GROUP="plugdev"' >> /etc/udev/rules.d/99-realsense-libusb.rules && \
-    echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0ad4", MODE="0666", GROUP="plugdev"' >> /etc/udev/rules.d/99-realsense-libusb.rules && \
-    echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0b07", MODE="0666", GROUP="plugdev"' >> /etc/udev/rules.d/99-realsense-libusb.rules && \
-    echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", ATTRS{idProduct}=="2150", MODE="0666", GROUP="plugdev"' >> /etc/udev/rules.d/99-realsense-libusb.rules
-
-# Use bash for later RUNs
-SHELL ["/bin/bash", "-c"]
+    cd drone-capstone/ros2_ws && \
+    colcon build && \
+    source install/setup.bash && \
+    cd / && rm -rf /tmp/drone-capstone
 
 # Build PX4 SITL (strip any stray opencv refs from the setup script first)
-RUN cd /root && \
-    git clone https://github.com/PX4/PX4-Autopilot.git --recursive && \
+RUN cd / && \
+    git clone https://github.com/mcgill-robotics/PX4-Autopilot.git --recursive && \
     cd PX4-Autopilot && \
     sed -i 's/libopencv[^ ]*//g' Tools/setup/ubuntu.sh && \
     bash ./Tools/setup/ubuntu.sh && \
     make px4_sitl
+
+# udev rules for RealSense cameras
+RUN echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0b37", MODE="0666", GROUP="plugdev"' > /etc/udev/rules.d/99-realsense-libusb.rules && \
+echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0ad1", MODE="0666", GROUP="plugdev"' >> /etc/udev/rules.d/99-realsense-libusb.rules && \
+echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0ad2", MODE="0666", GROUP="plugdev"' >> /etc/udev/rules.d/99-realsense-libusb.rules && \
+echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0ad3", MODE="0666", GROUP="plugdev"' >> /etc/udev/rules.d/99-realsense-libusb.rules && \
+echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0ad4", MODE="0666", GROUP="plugdev"' >> /etc/udev/rules.d/99-realsense-libusb.rules && \
+echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0b07", MODE="0666", GROUP="plugdev"' >> /etc/udev/rules.d/99-realsense-libusb.rules && \
+echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", ATTRS{idProduct}=="2150", MODE="0666", GROUP="plugdev"' >> /etc/udev/rules.d/99-realsense-libusb.rules
+
+# Use bash for later RUNs
+SHELL ["/bin/bash", "-c"]
 
 # Shell setup
 RUN echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc && \
