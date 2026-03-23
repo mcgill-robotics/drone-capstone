@@ -75,6 +75,7 @@ RUN apt-get update -qq && \
         ros-humble-camera-ros \
         ros-humble-image-transport-plugins \
         ros-humble-xacro \
+        ros-humble-ros-gz \
     && rm -rf /var/lib/apt/lists/*
 
 # Install required pip packages
@@ -113,31 +114,34 @@ RUN cd /tmp && \
     cd / && rm -rf /tmp/librealsense-2.53.1 /tmp/v2.53.1.tar.gz
 
 # Clone and build ROS workspace
-RUN git clone https://github.com/mcgill-robotics/drone-capstone /drone-capstone && \
-    cd /drone-capstone/ros2_ws && \
+RUN cd /tmp && \
+    git clone https://github.com/mcgill-robotics/drone-capstone && \
     source /opt/ros/humble/setup.bash && \
-    # rosdep install --from-paths src --ignore-src -r -y && \
-    colcon build
+    cd drone-capstone/ros2_ws && \
+    colcon build && \
+    source install/setup.bash && \
+    cd / && rm -rf /tmp/drone-capstone
+
+# Build PX4 SITL (strip any stray opencv refs from the setup script first)
+RUN cd /tmp && \
+    git clone https://github.com/mcgill-robotics/drone-capstone && \
+    cd drone-capstone/PX4-Autopilot && \
+    sed -i 's/libopencv[^ ]*//g' Tools/setup/ubuntu.sh && \
+    bash ./Tools/setup/ubuntu.sh && \
+    make px4_sitl && \
+    cd / && rm -rf /tmp/drone-capstone
 
 # udev rules for RealSense cameras
 RUN echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0b37", MODE="0666", GROUP="plugdev"' > /etc/udev/rules.d/99-realsense-libusb.rules && \
-    echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0ad1", MODE="0666", GROUP="plugdev"' >> /etc/udev/rules.d/99-realsense-libusb.rules && \
-    echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0ad2", MODE="0666", GROUP="plugdev"' >> /etc/udev/rules.d/99-realsense-libusb.rules && \
-    echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0ad3", MODE="0666", GROUP="plugdev"' >> /etc/udev/rules.d/99-realsense-libusb.rules && \
-    echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0ad4", MODE="0666", GROUP="plugdev"' >> /etc/udev/rules.d/99-realsense-libusb.rules && \
-    echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0b07", MODE="0666", GROUP="plugdev"' >> /etc/udev/rules.d/99-realsense-libusb.rules && \
-    echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", ATTRS{idProduct}=="2150", MODE="0666", GROUP="plugdev"' >> /etc/udev/rules.d/99-realsense-libusb.rules
+echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0ad1", MODE="0666", GROUP="plugdev"' >> /etc/udev/rules.d/99-realsense-libusb.rules && \
+echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0ad2", MODE="0666", GROUP="plugdev"' >> /etc/udev/rules.d/99-realsense-libusb.rules && \
+echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0ad3", MODE="0666", GROUP="plugdev"' >> /etc/udev/rules.d/99-realsense-libusb.rules && \
+echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0ad4", MODE="0666", GROUP="plugdev"' >> /etc/udev/rules.d/99-realsense-libusb.rules && \
+echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0b07", MODE="0666", GROUP="plugdev"' >> /etc/udev/rules.d/99-realsense-libusb.rules && \
+echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", ATTRS{idProduct}=="2150", MODE="0666", GROUP="plugdev"' >> /etc/udev/rules.d/99-realsense-libusb.rules
 
 # Use bash for later RUNs
 SHELL ["/bin/bash", "-c"]
-
-# Build PX4 SITL (strip any stray opencv refs from the setup script first)
-RUN cd /root && \
-    git clone https://github.com/PX4/PX4-Autopilot.git --recursive && \
-    cd PX4-Autopilot && \
-    sed -i 's/libopencv[^ ]*//g' Tools/setup/ubuntu.sh && \
-    bash ./Tools/setup/ubuntu.sh && \
-    make px4_sitl
 
 # Shell setup
 RUN echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc && \
