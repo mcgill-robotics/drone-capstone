@@ -8,6 +8,8 @@
 - https://github.com/christianrauch/apriltag_ros -3.3.0
 - https://github.com/christianrauch/apriltag_msgs -2.0.1
 - https://github.com/AprilRobotics/apriltag -v3.4.5
+- https://github.com/PX4/px4_msgs/commit/3a7c790eaee5284f4e48091dd77f697e4fd828d3
+- https://github.com/PX4/px4_ros_com/commit/86e9aeb20e55a4673fa8a9f1c29ea06a6c5ad1af
 
 ## Jetson Command
 ```bash
