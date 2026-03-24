@@ -10,6 +10,9 @@ services:
       - type: bind
         source: ../../../drone-capstone
         target: /drone-capstone
+      - type: bind
+        source: ../../../PX4-Autopilot
+        target: /PX4-Autopilot
     image: "mcgillrobotics/drone_capstone:jetson" 
     privileged: true
     device_cgroup_rules:
