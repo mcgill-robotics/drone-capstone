@@ -1,51 +1,12 @@
-/****************************************************************************
- *
- * Copyright 2020 PX4 Development Team. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- * list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- * this list of conditions and the following disclaimer in the documentation
- * and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- * may be used to endorse or promote products derived from this software without
- * specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
- *
- ****************************************************************************/
-
-/**
- * @brief Offboard control example
- * @file offboard_control.cpp
- * @addtogroup examples
- * @author Mickey Cowden <info@cowden.tech>
- * @author Nuno Marques <nuno.marques@dronesolutions.io>
- */
-
 #include <px4_msgs/msg/offboard_control_mode.hpp>
 #include <px4_msgs/msg/trajectory_setpoint.hpp>
 #include <px4_msgs/msg/vehicle_command.hpp>
-#include <px4_msgs/msg/vehicle_control_mode.hpp>
+#include <px4_msgs/msg/vehicle_local_position.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <stdint.h>
 
 #include <chrono>
+#include <cmath>
 #include <iostream>
 
 using namespace std::chrono;
@@ -57,132 +18,206 @@ class OffboardControl : public rclcpp::Node
 public:
 	OffboardControl() : Node("offboard_control")
 	{
+		RCLCPP_INFO(this->get_logger(), "CONSTRUCTOR STARTED");
 
-		offboard_control_mode_publisher_ = this->create_publisher<OffboardControlMode>("/fmu/in/offboard_control_mode", 10);
-		trajectory_setpoint_publisher_ = this->create_publisher<TrajectorySetpoint>("/fmu/in/trajectory_setpoint", 10);
-		vehicle_command_publisher_ = this->create_publisher<VehicleCommand>("/fmu/in/vehicle_command", 10);
+		offboard_control_mode_publisher_ =
+			this->create_publisher<OffboardControlMode>("/fmu/in/offboard_control_mode", 10);
+		trajectory_setpoint_publisher_ =
+			this->create_publisher<TrajectorySetpoint>("/fmu/in/trajectory_setpoint", 10);
+		vehicle_command_publisher_ =
+			this->create_publisher<VehicleCommand>("/fmu/in/vehicle_command", 10);
+
+		// FIX: PX4 publishes /fmu/out/ topics with BEST_EFFORT + VOLATILE durability.
+		// Using transient_local() causes a QoS incompatibility — the subscription
+		// silently receives nothing. Durability must be left as volatile (default).
+		rclcpp::QoS qos_profile(rclcpp::KeepLast(10));
+		qos_profile.best_effort();
+		// Do NOT call qos_profile.transient_local()
+
+		vehicle_local_position_subscriber_ =
+			this->create_subscription<VehicleLocalPosition>(
+				"/fmu/out/vehicle_local_position_v1",
+				qos_profile,
+				std::bind(&OffboardControl::vehicle_local_position_callback, this, std::placeholders::_1));
+
+		RCLCPP_INFO(this->get_logger(), "SUBSCRIBED TO /fmu/out/vehicle_local_position_v1");
 
 		offboard_setpoint_counter_ = 0;
+		stage_ = Stage::TAKEOFF;
+		delay_started_ = false;
 
-		auto timer_callback = [this]() -> void {
+		timer_ = this->create_wall_timer(100ms, std::bind(&OffboardControl::timer_callback, this));
 
-			if (offboard_setpoint_counter_ == 10) {
-				// Change to Offboard mode after 10 setpoints
-				this->publish_vehicle_command(VehicleCommand::VEHICLE_CMD_DO_SET_MODE, 1, 6);
-
-				// Arm the vehicle
-				this->arm();
-			}
-
-			// offboard_control_mode needs to be paired with trajectory_setpoint
-			publish_offboard_control_mode();
-			publish_trajectory_setpoint();
-
-			// stop the counter after reaching 11
-			if (offboard_setpoint_counter_ < 11) {
-				offboard_setpoint_counter_++;
-			}
-		};
-		timer_ = this->create_wall_timer(100ms, timer_callback);
+		RCLCPP_INFO(this->get_logger(), "TIMER CREATED");
 	}
 
-	void arm();
-	void disarm();
-
 private:
+	enum class Stage {
+		TAKEOFF,
+		MOVE_TO_SECOND_WAYPOINT
+	};
+
 	rclcpp::TimerBase::SharedPtr timer_;
 
 	rclcpp::Publisher<OffboardControlMode>::SharedPtr offboard_control_mode_publisher_;
 	rclcpp::Publisher<TrajectorySetpoint>::SharedPtr trajectory_setpoint_publisher_;
 	rclcpp::Publisher<VehicleCommand>::SharedPtr vehicle_command_publisher_;
 
-	std::atomic<uint64_t> timestamp_;   //!< common synced timestamped
+	rclcpp::Subscription<VehicleLocalPosition>::SharedPtr vehicle_local_position_subscriber_;
 
-	uint64_t offboard_setpoint_counter_;   //!< counter for the number of setpoints sent
+	uint64_t offboard_setpoint_counter_;
 
-	void publish_offboard_control_mode();
-	void publish_trajectory_setpoint();
-	void publish_vehicle_command(uint16_t command, float param1 = 0.0, float param2 = 0.0);
+	VehicleLocalPosition vehicle_local_position_{};
+	bool has_position_{false};
+
+	Stage stage_;
+	bool delay_started_;
+	rclcpp::Time first_waypoint_time_;
+
+	void vehicle_local_position_callback(const VehicleLocalPosition::SharedPtr msg)
+	{
+		vehicle_local_position_ = *msg;
+		has_position_ = true;
+
+		RCLCPP_INFO_THROTTLE(
+			this->get_logger(),
+			*this->get_clock(),
+			1000,
+			"POSITION -> x: %.2f y: %.2f z: %.2f",
+			msg->x, msg->y, msg->z
+		);
+	}
+
+	void timer_callback()
+	{
+		publish_offboard_control_mode();
+
+		// Phase 1: Send 10 setpoints first so PX4 accepts offboard mode
+		if (offboard_setpoint_counter_ < 10) {
+			publish_trajectory_setpoint(0.0, 0.0, -5.0);
+			offboard_setpoint_counter_++;
+			return;
+		}
+
+		// Phase 2: Arm and switch to offboard — but only once we have a valid position
+		if (offboard_setpoint_counter_ == 10) {
+			if (!has_position_) {
+				// Keep streaming setpoints while waiting for position estimate
+				publish_trajectory_setpoint(0.0, 0.0, -5.0);
+				RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+					"Waiting for valid position estimate before arming...");
+				return;
+			}
+			publish_vehicle_command(VehicleCommand::VEHICLE_CMD_DO_SET_MODE, 1.0, 6.0);
+			arm();
+			offboard_setpoint_counter_++;
+			RCLCPP_INFO(this->get_logger(), "OFFBOARD + ARM SENT");
+			return;
+		}
+
+		// Phase 3: Active flight — evaluate stage and publish appropriate setpoint
+		float target_x = 0.0f;
+		float target_y = 0.0f;
+		float target_z = -5.0f;
+
+		if (stage_ == Stage::TAKEOFF && has_position_) {
+			float dx = vehicle_local_position_.x - 0.0f;
+			float dy = vehicle_local_position_.y - 0.0f;
+			float dz = vehicle_local_position_.z - (-5.0f);
+
+			float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+
+			RCLCPP_INFO_THROTTLE(
+				this->get_logger(),
+				*this->get_clock(),
+				1000,
+				"DIST TO WP1 -> %.2f",
+				dist
+			);
+
+			// FIX: Raised threshold from 0.5 to 0.75 for simulation tolerance
+			if (dist < 0.75f) {
+				if (!delay_started_) {
+					delay_started_ = true;
+					first_waypoint_time_ = this->get_clock()->now();
+					RCLCPP_INFO(this->get_logger(), "REACHED WP1, STARTING 2s DELAY");
+				}
+
+				double elapsed = (this->get_clock()->now() - first_waypoint_time_).seconds();
+
+				RCLCPP_INFO_THROTTLE(
+					this->get_logger(),
+					*this->get_clock(),
+					1000,
+					"DELAY TIMER -> %.2f s",
+					elapsed
+				);
+
+				if (elapsed > 2.0) {
+					stage_ = Stage::MOVE_TO_SECOND_WAYPOINT;
+					RCLCPP_INFO(this->get_logger(), "MOVING TO WP2 (x=10)");
+				}
+			}
+		}
+
+		if (stage_ == Stage::MOVE_TO_SECOND_WAYPOINT) {
+			target_x = 10.0f;
+		}
+
+		publish_trajectory_setpoint(target_x, target_y, target_z);
+	}
+
+	void arm()
+	{
+		publish_vehicle_command(VehicleCommand::VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.0);
+		RCLCPP_INFO(this->get_logger(), "ARM COMMAND SENT");
+	}
+
+	void publish_offboard_control_mode()
+	{
+		OffboardControlMode msg{};
+		msg.position = true;
+		msg.velocity = false;
+		msg.acceleration = false;
+		msg.attitude = false;
+		msg.body_rate = false;
+		msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
+		offboard_control_mode_publisher_->publish(msg);
+	}
+
+	void publish_trajectory_setpoint(float x, float y, float z)
+	{
+		TrajectorySetpoint msg{};
+		msg.position = {x, y, z};
+		msg.yaw = 0.0;
+		msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
+		trajectory_setpoint_publisher_->publish(msg);
+	}
+
+	void publish_vehicle_command(uint16_t command, float param1 = 0.0, float param2 = 0.0)
+	{
+		VehicleCommand msg{};
+		msg.command = command;
+		msg.param1 = param1;
+		msg.param2 = param2;
+		msg.target_system = 1;
+		msg.target_component = 1;
+		msg.source_system = 1;
+		msg.source_component = 1;
+		msg.from_external = true;
+		msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
+		vehicle_command_publisher_->publish(msg);
+	}
 };
-
-/**
- * @brief Send a command to Arm the vehicle
- */
-void OffboardControl::arm()
-{
-	publish_vehicle_command(VehicleCommand::VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.0);
-
-	RCLCPP_INFO(this->get_logger(), "Arm command send");
-}
-
-/**
- * @brief Send a command to Disarm the vehicle
- */
-void OffboardControl::disarm()
-{
-	publish_vehicle_command(VehicleCommand::VEHICLE_CMD_COMPONENT_ARM_DISARM, 0.0);
-
-	RCLCPP_INFO(this->get_logger(), "Disarm command send");
-}
-
-/**
- * @brief Publish the offboard control mode.
- *        For this example, only position and altitude controls are active.
- */
-void OffboardControl::publish_offboard_control_mode()
-{
-	OffboardControlMode msg{};
-	msg.position = true;
-	msg.velocity = false;
-	msg.acceleration = false;
-	msg.attitude = false;
-	msg.body_rate = false;
-	msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
-	offboard_control_mode_publisher_->publish(msg);
-}
-
-/**
- * @brief Publish a trajectory setpoint
- *        For this example, it sends a trajectory setpoint to make the
- *        vehicle hover at 5 meters with a yaw angle of 180 degrees.
- */
-void OffboardControl::publish_trajectory_setpoint()
-{
-	TrajectorySetpoint msg{};
-	msg.position = {0.0, 0.0, -5.0};
-	msg.yaw = -3.14; // [-PI:PI]
-	msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
-	trajectory_setpoint_publisher_->publish(msg);
-}
-
-/**
- * @brief Publish vehicle commands
- * @param command   Command code (matches VehicleCommand and MAVLink MAV_CMD codes)
- * @param param1    Command parameter 1
- * @param param2    Command parameter 2
- */
-void OffboardControl::publish_vehicle_command(uint16_t command, float param1, float param2)
-{
-	VehicleCommand msg{};
-	msg.param1 = param1;
-	msg.param2 = param2;
-	msg.command = command;
-	msg.target_system = 1;
-	msg.target_component = 1;
-	msg.source_system = 1;
-	msg.source_component = 1;
-	msg.from_external = true;
-	msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
-	vehicle_command_publisher_->publish(msg);
-}
 
 int main(int argc, char *argv[])
 {
-	std::cout << "Starting offboard control node..." << std::endl;
+	std::cout << "MAIN STARTED" << std::endl;
 	setvbuf(stdout, NULL, _IONBF, BUFSIZ);
+
 	rclcpp::init(argc, argv);
 	rclcpp::spin(std::make_shared<OffboardControl>());
-
 	rclcpp::shutdown();
+
 	return 0;
 }
