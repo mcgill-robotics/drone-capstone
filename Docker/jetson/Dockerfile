@@ -129,7 +129,7 @@ RUN cd /tmp && \
     sed -i 's/libopencv[^ ]*//g' Tools/setup/ubuntu.sh && \
     bash ./Tools/setup/ubuntu.sh && \
     make px4_sitl && \
-    cd \ && rm -rf /tmp/PX4-Autopilot
+    cd / && rm -rf /tmp/PX4-Autopilot
 
 # udev rules for RealSense cameras
 RUN echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0b37", MODE="0666", GROUP="plugdev"' > /etc/udev/rules.d/99-realsense-libusb.rules && \
