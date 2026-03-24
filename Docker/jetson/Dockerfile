@@ -124,10 +124,10 @@ RUN cd /tmp && \
 
 # Build PX4 SITL (strip any stray opencv refs from the setup script first)
 RUN cd /tmp && \
-    git clone https://github.com/mcgill-robotics/PX4-Autopilot.git --recursive && \
+    git clone https://github.com/PX4/PX4-Autopilot.git --recursive && \
     cd PX4-Autopilot && \
     sed -i 's/libopencv[^ ]*//g' Tools/setup/ubuntu.sh && \
-#    bash ./Tools/setup/ubuntu.sh && \
+    bash ./Tools/setup/ubuntu.sh && \
     make px4_sitl && \
     cd \ && rm -rf /tmp/PX4-Autopilot
 
