@@ -1,7 +1,0 @@
-numpy
-matplotlib
-scipy
-torch
-torchvision
-opencv-python
-colcon-core
