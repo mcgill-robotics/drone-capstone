@@ -79,7 +79,7 @@ RUN apt-get update -qq && \
     && rm -rf /var/lib/apt/lists/*
 
 # Install required pip packages
-RUN pip3 install --upgrade pip pyros-genmsg setuptools
+RUN pip3 install --upgrade pip pyros-genmsg setuptools pymavlink
 
 # Build Micro-XRCE-DDS-Agent for PX4
 RUN cd /tmp && \
