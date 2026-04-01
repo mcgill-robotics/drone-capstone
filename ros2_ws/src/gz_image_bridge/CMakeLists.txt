@@ -34,7 +34,7 @@ ament_target_dependencies(gz_image_bridge
 )
 
 target_link_libraries(gz_image_bridge
-  gz-transport${GZ_TRANSPORT_VER}::gz-transport${GZ_TRANSPORT_VER}
+  # gz-transport${GZ_TRANSPORT_VER}::gz-transport${GZ_TRANSPORT_VER}
   gz-msgs${GZ_MSGS_VER}::gz-msgs${GZ_MSGS_VER}
 )
 
