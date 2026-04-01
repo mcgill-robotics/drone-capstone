@@ -94,7 +94,7 @@ private:
 
 		// Phase 1: Send 10 setpoints first so PX4 accepts offboard mode
 		if (offboard_setpoint_counter_ < 10) {
-			publish_trajectory_setpoint(0.0, 0.0, -5.0);
+			publish_trajectory_setpoint(0.0, 0.0, -1.0);
 			offboard_setpoint_counter_++;
 			return;
 		}
@@ -103,7 +103,7 @@ private:
 		if (offboard_setpoint_counter_ == 10) {
 			if (!has_position_) {
 				// Keep streaming setpoints while waiting for position estimate
-				publish_trajectory_setpoint(0.0, 0.0, -5.0);
+				publish_trajectory_setpoint(0.0, 0.0, -1.0);
 				RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
 					"Waiting for valid position estimate before arming...");
 				return;
@@ -118,12 +118,12 @@ private:
 		// Phase 3: Active flight — evaluate stage and publish appropriate setpoint
 		float target_x = 0.0f;
 		float target_y = 0.0f;
-		float target_z = -5.0f;
+		float target_z = -1.0f;
 
 		if (stage_ == Stage::TAKEOFF && has_position_) {
 			float dx = vehicle_local_position_.x - 0.0f;
 			float dy = vehicle_local_position_.y - 0.0f;
-			float dz = vehicle_local_position_.z - (-5.0f);
+			float dz = vehicle_local_position_.z - (-1.0f);
 
 			float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
 

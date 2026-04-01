@@ -21,11 +21,11 @@ public:
       "/camera/camera_info", 10);
 
     gz_node_.Subscribe(
-      "/world/default/model/x500_mono_cam_down_0/link/camera_link/sensor/camera/image",
+      "/world/apriltag/model/x500_mono_cam_down_0/link/camera_link/sensor/camera/image",
       &GzImageBridge::gz_image_callback, this);
 
     gz_node_.Subscribe(
-      "/world/default/model/x500_mono_cam_down_0/link/camera_link/sensor/camera/camera_info",
+      "/world/apriltag/model/x500_mono_cam_down_0/link/camera_link/sensor/camera/camera_info",
       &GzImageBridge::gz_info_callback, this);
 
     RCLCPP_INFO(this->get_logger(), "GzImageBridge started, waiting for Gazebo frames...");
