@@ -6,8 +6,12 @@ import os
 
 
 def generate_launch_description():
+    tags_config = os.path.join(
+        get_package_share_directory('apriltag_ros'),
+        'cfg',
+        'tags_36h11.yaml'
+    )
 
-    # --- Gazebo → ROS 2 image bridge ---
     gz_image_bridge = Node(
         package='gz_image_bridge',
         executable='gz_image_bridge',
@@ -15,40 +19,37 @@ def generate_launch_description():
         output='screen',
     )
 
-    # --- AprilTag detection directly on raw sim image ---
+    # Rectify /camera/image_raw -> /camera/image_rect
+    rectify_node = Node(
+        package='image_proc',
+        executable='image_proc',
+        name='image_proc_fisheye2',
+        namespace='camera',
+        output='screen',
+        remappings=[
+            ('image', 'image_raw'),
+            ('camera_info', 'camera_info'),
+            ('image_rect', 'image_rect'),
+        ],
+        parameters=[{
+            'queue_size': 60,
+        }],
+    )
+
+    # AprilTag detector subscribes to /camera/image_rect and /camera/camera_info
     apriltag_node = Node(
         package='apriltag_ros',
         executable='apriltag_node',
-        name='apriltag_sim',
+        name='apriltag_detector',
         output='screen',
         remappings=[
             ('image_rect', '/camera/image_raw'),
             ('camera_info', '/camera/camera_info'),
         ],
-        parameters=[
-            os.path.join(
-                get_package_share_directory('apriltag_ros'),
-                'cfg',
-                'tags_36h11.yaml'
-            )
-        ],
+        parameters=[tags_config],
     )
 
-    # --- Tag pose from detections node ---
-    tag_pose_node = Node(
-        package='apriltag_pose_from_detections',
-        executable='tag_pose_node',
-        name='tag_pose_node',
-        output='screen',
-        parameters=[{
-            'detections_topic': '/detections',
-            'camera_info_topic': '/camera/camera_info',
-            'tag_size_m': 1.0,
-            'tag_id': 9,
-        }],
-    )
-
-    # --- MicroXRCE agent over UDP for PX4 SITL ---
+    # PX4 Micro XRCE agent
     microxrce_agent = ExecuteProcess(
         cmd=['MicroXRCEAgent', 'udp4', '-p', '8888'],
         output='screen',
@@ -56,7 +57,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         gz_image_bridge,
+        rectify_node,
         apriltag_node,
-        tag_pose_node,
         microxrce_agent,
     ])

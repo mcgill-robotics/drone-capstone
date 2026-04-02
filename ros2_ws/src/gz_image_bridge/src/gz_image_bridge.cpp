@@ -32,50 +32,78 @@ public:
   }
 
 private:
-  // ── Image ──────────────────────────────────────────────────────────────────
   void gz_image_callback(const gz::msgs::Image & gz_img)
   {
     auto ros_msg = sensor_msgs::msg::Image();
 
-    ros_msg.header.stamp    = this->now();
+    auto stamp = this->now();
+
+    ros_msg.header.stamp = stamp;
     ros_msg.header.frame_id = "camera_link";
 
     ros_msg.height = gz_img.height();
-    ros_msg.width  = gz_img.width();
-    ros_msg.step   = gz_img.step();
+    ros_msg.width = gz_img.width();
+    ros_msg.step = gz_img.step();
 
     switch (gz_img.pixel_format_type())
     {
-      case gz::msgs::PixelFormatType::RGB_INT8:  ros_msg.encoding = "rgb8";   break;
-      case gz::msgs::PixelFormatType::BGR_INT8:  ros_msg.encoding = "bgr8";   break;
-      case gz::msgs::PixelFormatType::L_INT8:    ros_msg.encoding = "mono8";  break;
-      case gz::msgs::PixelFormatType::L_INT16:   ros_msg.encoding = "mono16"; break;
-      default:                                   ros_msg.encoding = "rgb8";   break;
+      case gz::msgs::PixelFormatType::RGB_INT8:
+        ros_msg.encoding = "rgb8";
+        break;
+      case gz::msgs::PixelFormatType::BGR_INT8:
+        ros_msg.encoding = "bgr8";
+        break;
+      case gz::msgs::PixelFormatType::L_INT8:
+        ros_msg.encoding = "mono8";
+        break;
+      case gz::msgs::PixelFormatType::L_INT16:
+        ros_msg.encoding = "mono16";
+        break;
+      default:
+        ros_msg.encoding = "rgb8";
+        break;
     }
 
     ros_msg.is_bigendian = false;
 
     if (ros_msg.step == 0)
-      ros_msg.step = ros_msg.width * 3;
+    {
+      if (ros_msg.encoding == "mono8")
+      {
+        ros_msg.step = ros_msg.width;
+      }
+      else if (ros_msg.encoding == "mono16")
+      {
+        ros_msg.step = ros_msg.width * 2;
+      }
+      else
+      {
+        ros_msg.step = ros_msg.width * 3;
+      }
+    }
 
     const std::string & data = gz_img.data();
     ros_msg.data.assign(data.begin(), data.end());
 
     img_pub_->publish(ros_msg);
+
+    if (have_camera_info_)
+    {
+      auto info_msg = latest_info_;
+      info_msg.header.stamp = stamp;
+      info_msg.header.frame_id = "camera_link";
+      info_pub_->publish(info_msg);
+    }
   }
 
-  // ── Camera Info ────────────────────────────────────────────────────────────
   void gz_info_callback(const gz::msgs::CameraInfo & gz_info)
   {
     auto ros_msg = sensor_msgs::msg::CameraInfo();
 
-    ros_msg.header.stamp    = this->now();
     ros_msg.header.frame_id = "camera_link";
-
-    ros_msg.width  = gz_info.width();
+    ros_msg.width = gz_info.width();
     ros_msg.height = gz_info.height();
 
-    // Distortion
     if (gz_info.has_distortion())
     {
       const auto & d = gz_info.distortion();
@@ -91,46 +119,73 @@ private:
           ros_msg.distortion_model = "plumb_bob";
           break;
       }
+
+      ros_msg.d.clear();
       for (int i = 0; i < d.k_size(); ++i)
+      {
         ros_msg.d.push_back(d.k(i));
+      }
     }
 
-    // Intrinsic matrix K (3x3, row-major → 9 elements)
     if (gz_info.has_intrinsics())
     {
       const auto & k = gz_info.intrinsics().k();
-      // k is a repeated double with 9 values
       for (int i = 0; i < k.size() && i < 9; ++i)
+      {
         ros_msg.k[i] = k.Get(i);
+      }
     }
 
-    // Rectification matrix R (identity for a mono camera)
-    ros_msg.r[0] = 1.0; ros_msg.r[4] = 1.0; ros_msg.r[8] = 1.0;
+    ros_msg.r[0] = 1.0;
+    ros_msg.r[1] = 0.0;
+    ros_msg.r[2] = 0.0;
+    ros_msg.r[3] = 0.0;
+    ros_msg.r[4] = 1.0;
+    ros_msg.r[5] = 0.0;
+    ros_msg.r[6] = 0.0;
+    ros_msg.r[7] = 0.0;
+    ros_msg.r[8] = 1.0;
 
-    // Projection matrix P (3x4)
     if (gz_info.has_projection())
     {
       const auto & p = gz_info.projection().p();
       for (int i = 0; i < p.size() && i < 12; ++i)
+      {
         ros_msg.p[i] = p.Get(i);
+      }
     }
     else if (gz_info.has_intrinsics())
     {
-      // Fall back: build P from K with Tx=Ty=0
       const auto & k = gz_info.intrinsics().k();
-      if (k.size() >= 9) {
-        ros_msg.p[0]  = k.Get(0); ros_msg.p[1]  = k.Get(1); ros_msg.p[2]  = k.Get(2); ros_msg.p[3]  = 0.0;
-        ros_msg.p[4]  = k.Get(3); ros_msg.p[5]  = k.Get(4); ros_msg.p[6]  = k.Get(5); ros_msg.p[7]  = 0.0;
-        ros_msg.p[8]  = k.Get(6); ros_msg.p[9]  = k.Get(7); ros_msg.p[10] = k.Get(8); ros_msg.p[11] = 0.0;
+      if (k.size() >= 9)
+      {
+        ros_msg.p[0]  = k.Get(0);
+        ros_msg.p[1]  = k.Get(1);
+        ros_msg.p[2]  = k.Get(2);
+        ros_msg.p[3]  = 0.0;
+
+        ros_msg.p[4]  = k.Get(3);
+        ros_msg.p[5]  = k.Get(4);
+        ros_msg.p[6]  = k.Get(5);
+        ros_msg.p[7]  = 0.0;
+
+        ros_msg.p[8]  = k.Get(6);
+        ros_msg.p[9]  = k.Get(7);
+        ros_msg.p[10] = k.Get(8);
+        ros_msg.p[11] = 0.0;
       }
     }
 
-    info_pub_->publish(ros_msg);
+    latest_info_ = ros_msg;
+    have_camera_info_ = true;
   }
 
-  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr      img_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr img_pub_;
   rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr info_pub_;
   gz::transport::Node gz_node_;
+
+  sensor_msgs::msg::CameraInfo latest_info_;
+  bool have_camera_info_ = false;
 };
 
 int main(int argc, char ** argv)
