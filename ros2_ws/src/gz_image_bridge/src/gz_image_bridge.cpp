@@ -1,4 +1,5 @@
 #include <rclcpp/rclcpp.hpp>
+#include <rclcpp/qos.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 
@@ -14,11 +15,14 @@ class GzImageBridge : public rclcpp::Node
 public:
   GzImageBridge() : Node("gz_image_bridge")
   {
+    // SensorDataQoS = best effort, small queue, better for image streams
+    auto qos = rclcpp::SensorDataQoS();
+
     img_pub_ = this->create_publisher<sensor_msgs::msg::Image>(
-      "/camera/image_raw", 10);
+      "/camera/image_raw", qos);
 
     info_pub_ = this->create_publisher<sensor_msgs::msg::CameraInfo>(
-      "/camera/camera_info", 10);
+      "/camera/camera_info", qos);
 
     gz_node_.Subscribe(
       "/world/apriltag/model/x500_mono_cam_down_0/link/camera_link/sensor/camera/image",
@@ -34,10 +38,13 @@ public:
 private:
   void gz_image_callback(const gz::msgs::Image & gz_img)
   {
-    auto ros_msg = sensor_msgs::msg::Image();
+    if (!have_camera_info_) {
+      return;
+    }
 
     auto stamp = this->now();
 
+    sensor_msgs::msg::Image ros_msg;
     ros_msg.header.stamp = stamp;
     ros_msg.header.frame_id = "camera_link";
 
@@ -68,16 +75,11 @@ private:
 
     if (ros_msg.step == 0)
     {
-      if (ros_msg.encoding == "mono8")
-      {
+      if (ros_msg.encoding == "mono8") {
         ros_msg.step = ros_msg.width;
-      }
-      else if (ros_msg.encoding == "mono16")
-      {
+      } else if (ros_msg.encoding == "mono16") {
         ros_msg.step = ros_msg.width * 2;
-      }
-      else
-      {
+      } else {
         ros_msg.step = ros_msg.width * 3;
       }
     }
@@ -87,18 +89,15 @@ private:
 
     img_pub_->publish(ros_msg);
 
-    if (have_camera_info_)
-    {
-      auto info_msg = latest_info_;
-      info_msg.header.stamp = stamp;
-      info_msg.header.frame_id = "camera_link";
-      info_pub_->publish(info_msg);
-    }
+    auto info_msg = latest_info_;
+    info_msg.header.stamp = stamp;
+    info_msg.header.frame_id = "camera_link";
+    info_pub_->publish(info_msg);
   }
 
   void gz_info_callback(const gz::msgs::CameraInfo & gz_info)
   {
-    auto ros_msg = sensor_msgs::msg::CameraInfo();
+    sensor_msgs::msg::CameraInfo ros_msg;
 
     ros_msg.header.frame_id = "camera_link";
     ros_msg.width = gz_info.width();
@@ -120,7 +119,7 @@ private:
           break;
       }
 
-      ros_msg.d.clear();
+      ros_msg.d.reserve(d.k_size());
       for (int i = 0; i < d.k_size(); ++i)
       {
         ros_msg.d.push_back(d.k(i));
@@ -176,7 +175,7 @@ private:
       }
     }
 
-    latest_info_ = ros_msg;
+    latest_info_ = std::move(ros_msg);
     have_camera_info_ = true;
   }
 
