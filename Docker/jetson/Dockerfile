@@ -122,6 +122,18 @@ RUN cd /tmp && \
     make px4_sitl && \
     cd / && rm -rf /tmp/PX4-Autopilot
 
+# Install gz dev headers (OSRF repo required; runtime libs already present but headers are not)
+RUN curl -sSL https://packages.osrfoundation.org/gazebo.gpg \
+        -o /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] \
+        http://packages.osrfoundation.org/gazebo/ubuntu-stable jammy main" \
+        > /etc/apt/sources.list.d/gazebo-stable.list && \
+    apt-get update -qq && \
+    apt-get install -y --no-install-recommends \
+        libgz-transport13-dev \
+        libgz-msgs10-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 # Clone and build ROS workspace
 RUN cd /tmp && \
     git clone https://github.com/mcgill-robotics/drone-capstone -b ros2hotfix_gazebofail && \
