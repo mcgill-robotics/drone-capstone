@@ -115,7 +115,7 @@ RUN cd /tmp && \
 
 # Clone and build ROS workspace
 RUN cd /tmp && \
-    git clone https://github.com/mcgill-robotics/drone-capstone && \
+    git clone https://github.com/mcgill-robotics/drone-capstone -b ros2hotfix_gazebofail && \
     source /opt/ros/humble/setup.bash && \
     cd drone-capstone/ros2_ws && \
     colcon build && \
