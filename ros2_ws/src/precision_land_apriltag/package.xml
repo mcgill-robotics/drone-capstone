@@ -1,0 +1,25 @@
+<package format="3">
+  <name>precision_land_apriltag</name>
+  <version>0.0.1</version>
+  <description>PX4 ROS 2 precision landing mode using AprilTag detections.</description>
+
+  <maintainer email="martin@example.com">Martin</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>px4_msgs</depend>
+  <depend>px4_ros2_cpp</depend>
+  <depend>apriltag_msgs</depend>
+
+  <build_depend>eigen3_cmake_module</build_depend>
+  <depend>eigen</depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
