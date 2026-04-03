@@ -19,23 +19,6 @@ def generate_launch_description():
         output='screen',
     )
 
-    # Rectify /camera/image_raw -> /camera/image_rect
-    rectify_node = Node(
-        package='image_proc',
-        executable='image_proc',
-        name='image_proc_fisheye2',
-        namespace='camera',
-        output='screen',
-        remappings=[
-            ('image', 'image_raw'),
-            ('camera_info', 'camera_info'),
-            ('image_rect', 'image_rect'),
-        ],
-        parameters=[{
-            'queue_size': 60,
-        }],
-    )
-
     # AprilTag detector subscribes to /camera/image_rect and /camera/camera_info
     apriltag_node = Node(
         package='apriltag_ros',
@@ -49,6 +32,14 @@ def generate_launch_description():
         parameters=[tags_config],
     )
 
+    # tag overlay on image feed
+    apriltag_viz = Node(
+        package='apriltag_visualizer',
+        executable='apriltag_visualizer',
+        name='apriltag_viz',
+        output='screen',
+    )
+
     # PX4 Micro XRCE agent
     microxrce_agent = ExecuteProcess(
         cmd=['MicroXRCEAgent', 'udp4', '-p', '8888'],
@@ -57,7 +48,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         gz_image_bridge,
-        rectify_node,
         apriltag_node,
+        apriltag_viz,
         microxrce_agent,
     ])
