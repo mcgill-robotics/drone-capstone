@@ -2,18 +2,23 @@
 #include <px4_msgs/msg/trajectory_setpoint.hpp>
 #include <px4_msgs/msg/vehicle_command.hpp>
 #include <px4_msgs/msg/vehicle_local_position.hpp>
+#include <px4_msgs/msg/vehicle_attitude.hpp>
+#include <px4_msgs/msg/vehicle_land_detected.hpp>
 
 #include <apriltag_msgs/msg/april_tag_detection_array.hpp>
+#include <sensor_msgs/msg/camera_info.hpp>
 
 #include <rclcpp/rclcpp.hpp>
 #include <stdint.h>
+
+#include <Eigen/Core>
+#include <Eigen/Geometry>
 
 #include <chrono>
 #include <cmath>
 #include <iostream>
 #include <algorithm>
 
-using namespace std::chrono;
 using namespace std::chrono_literals;
 using namespace px4_msgs::msg;
 
@@ -22,6 +27,7 @@ class OffboardControl : public rclcpp::Node
 public:
     OffboardControl() : Node("offboard_control")
     {
+        // ── Publishers ────────────────────────────────────────────────────────
         offboard_control_mode_publisher_ =
             this->create_publisher<OffboardControlMode>("/fmu/in/offboard_control_mode", 10);
         trajectory_setpoint_publisher_ =
@@ -29,365 +35,406 @@ public:
         vehicle_command_publisher_ =
             this->create_publisher<VehicleCommand>("/fmu/in/vehicle_command", 10);
 
-        rclcpp::QoS qos_profile(rclcpp::KeepLast(10));
-        qos_profile.best_effort();
+        // ── Subscribers ───────────────────────────────────────────────────────
+        rclcpp::QoS qos_be(rclcpp::KeepLast(10));
+        qos_be.best_effort();
 
-        vehicle_local_position_subscriber_ =
+        vehicle_local_position_sub_ =
             this->create_subscription<VehicleLocalPosition>(
-                "/fmu/out/vehicle_local_position_v1",
-                qos_profile,
-                std::bind(&OffboardControl::vehicle_local_position_callback, this, std::placeholders::_1));
+                "/fmu/out/vehicle_local_position_v1", qos_be,
+                std::bind(&OffboardControl::localPositionCallback, this, std::placeholders::_1));
 
-        apriltag_subscriber_ =
+        vehicle_attitude_sub_ =
+            this->create_subscription<VehicleAttitude>(
+                "/fmu/out/vehicle_attitude", qos_be,
+                std::bind(&OffboardControl::attitudeCallback, this, std::placeholders::_1));
+
+        land_detected_sub_ =
+            this->create_subscription<VehicleLandDetected>(
+                "/fmu/out/vehicle_land_detected", qos_be,
+                std::bind(&OffboardControl::landDetectedCallback, this, std::placeholders::_1));
+
+        apriltag_sub_ =
             this->create_subscription<apriltag_msgs::msg::AprilTagDetectionArray>(
                 "/detections",
-                10,
-                std::bind(&OffboardControl::apriltag_callback, this, std::placeholders::_1));
+                rclcpp::QoS(10).best_effort(),
+                std::bind(&OffboardControl::apriltagCallback, this, std::placeholders::_1));
+
+        camera_info_sub_ =
+            this->create_subscription<sensor_msgs::msg::CameraInfo>(
+                "/camera/camera_info",
+                rclcpp::QoS(10).best_effort(),
+                std::bind(&OffboardControl::cameraInfoCallback, this, std::placeholders::_1));
 
         offboard_setpoint_counter_ = 0;
-        stage_ = Stage::TAKEOFF_TO_APPROACH;
-        delay_started_ = false;
+        stage_ = Stage::INIT;
+        land_detected_ = false;
+        target_lost_prev_ = false;
         land_command_sent_ = false;
 
-        smooth_x_ = 0.0f;
-        smooth_y_ = 0.0f;
-        smooth_z_ = -1.0f;
+        resetTag();
 
-        prev_err_x_px_ = 0.0f;
-        prev_err_y_px_ = 0.0f;
+        timer_ = this->create_wall_timer(100ms, std::bind(&OffboardControl::timerCallback, this));
 
-        timer_ = this->create_wall_timer(100ms, std::bind(&OffboardControl::timer_callback, this));
+        RCLCPP_INFO(this->get_logger(), "OffboardControl started");
     }
 
 private:
-    enum class Stage {
-        TAKEOFF_TO_APPROACH,
-        HOVER_AT_APPROACH,
-        VISION_LANDING,
-        LAND_SENT
+    // ── Parameters ────────────────────────────────────────────────────────────
+    static constexpr int    TARGET_TAG_ID      = 11;
+    static constexpr float  APPROACH_X         = 12.0f;
+    static constexpr float  APPROACH_Y         =  0.0f;
+    static constexpr float  APPROACH_Z         = -10.0f;   // 10 m AGL in NED
+
+    // Descent speeds
+    static constexpr float  DESCENT_VEL_FAST   =  0.3f;   // m/s above SLOW_ALT
+    static constexpr float  DESCENT_VEL_SLOW   =  0.08f;  // m/s below SLOW_ALT
+    static constexpr float  DESCENT_SLOW_ALT   =  1.0f;   // m AGL — start slowing here
+
+    // At this altitude stop all tracking and just commit to NAV_LAND
+    static constexpr float  COMMIT_LAND_ALT    =  0.30f;  // m AGL
+
+    // XY controller
+    static constexpr float  VEL_P_GAIN         =  0.6f;
+    static constexpr float  VEL_I_GAIN         =  0.0f;
+    static constexpr float  MAX_VELOCITY       =  0.8f;
+
+    static constexpr float  TARGET_TIMEOUT_S   =  1.0f;
+    static constexpr float  DELTA_POS          =  0.30f;
+    static constexpr float  DELTA_VEL          =  0.25f;
+    static constexpr double CAM_OFFSET_Z       = -0.1;
+
+    // ── Internal tag struct ───────────────────────────────────────────────────
+    struct Tag {
+        Eigen::Vector3d    position{NAN, NAN, NAN};
+        Eigen::Quaterniond orientation{1, 0, 0, 0};
+        rclcpp::Time       timestamp{0, 0, RCL_ROS_TIME};
+        bool valid() const { return !std::isnan(position.x()); }
     };
 
-    // ── Approach point — directly above tag 11 ───────────────────────────────
-    static constexpr float APPROACH_X = 10.0f;
-    static constexpr float APPROACH_Y = 0.0f;
-    static constexpr float APPROACH_Z = -3.0f;
+    void resetTag()
+    {
+        tag_.position    = {NAN, NAN, NAN};
+        tag_.orientation = Eigen::Quaterniond::Identity();
+        tag_.timestamp   = rclcpp::Time(0, 0, RCL_ROS_TIME);
+        vel_x_integral_  = 0.0f;
+        vel_y_integral_  = 0.0f;
+    }
 
-    static constexpr int TARGET_TAG_ID = 11;
+    // ── State machine ─────────────────────────────────────────────────────────
+    enum class Stage {
+        INIT,
+        FLY_TO_APPROACH,
+        DESCEND,
+        COMMIT_LAND,   // below COMMIT_LAND_ALT — no more tracking, just land
+        FINISHED
+    };
 
-    // ── Camera ───────────────────────────────────────────────────────────────
-    static constexpr float IMAGE_WIDTH  = 640.0f;
-    static constexpr float IMAGE_HEIGHT = 480.0f;
+    std::string stageName(Stage s) const
+    {
+        switch (s) {
+            case Stage::INIT:            return "INIT";
+            case Stage::FLY_TO_APPROACH: return "FLY_TO_APPROACH";
+            case Stage::DESCEND:         return "DESCEND";
+            case Stage::COMMIT_LAND:     return "COMMIT_LAND";
+            case Stage::FINISHED:        return "FINISHED";
+            default:                     return "UNKNOWN";
+        }
+    }
 
-    // ── PD controller ────────────────────────────────────────────────────────
-    // KP: proportional gain — normalised pixel error → metres
-    // KD: derivative gain  — damps oscillation
-    // Lower KP if oscillating. Higher KD if still overshooting.
-    static constexpr float VISION_KP_XY  = 0.4f;
-    static constexpr float VISION_KD_XY  = 0.15f;
-    static constexpr float MAX_STEP_XY   = 0.20f;  // hard cap per tick (m)
-
-    // ── Signs: flip if drone moves AWAY from tag ─────────────────────────────
-    static constexpr float SIGN_X_FROM_IMG_Y =  1.0f;
-    static constexpr float SIGN_Y_FROM_IMG_X =  1.0f;
-
-    // ── Descent ──────────────────────────────────────────────────────────────
-    static constexpr float DESCENT_RATE_MPS = 0.25f;
-    static constexpr float TIMER_DT         = 0.1f;
-    static constexpr float DESCENT_STEP     = DESCENT_RATE_MPS * TIMER_DT;
-
-    // Land command fires below this altitude (m AGL)
-    static constexpr float LAND_ALT_M = 0.50f;
-
-    // ── Centering tolerance ───────────────────────────────────────────────────
-    // Tag just needs to be roughly in frame to start descending.
-    // This is intentionally generous — precision improves as we get lower.
-    static constexpr float CENTER_TOL_PX = 120.0f;  // ~19% of frame width
-
-    // ── Approach thresholds ──────────────────────────────────────────────────
-    static constexpr float XY_REACHED_THRESH = 0.50f;
-    static constexpr float Z_REACHED_THRESH  = 0.40f;
-
-    // ── Tag staleness ────────────────────────────────────────────────────────
-    static constexpr double TAG_TIMEOUT_SEC = 0.8;
-
-    // ── Setpoint smoothing ────────────────────────────────────────────────────
-    // Higher alpha = more responsive but jerkier
-    // Lower alpha  = smoother but laggier
-    static constexpr float SMOOTH_ALPHA = 0.35f;
-
-    // ── Members ──────────────────────────────────────────────────────────────
-    rclcpp::TimerBase::SharedPtr timer_;
-    rclcpp::Publisher<OffboardControlMode>::SharedPtr     offboard_control_mode_publisher_;
-    rclcpp::Publisher<TrajectorySetpoint>::SharedPtr      trajectory_setpoint_publisher_;
-    rclcpp::Publisher<VehicleCommand>::SharedPtr          vehicle_command_publisher_;
-    rclcpp::Subscription<VehicleLocalPosition>::SharedPtr vehicle_local_position_subscriber_;
-    rclcpp::Subscription<apriltag_msgs::msg::AprilTagDetectionArray>::SharedPtr apriltag_subscriber_;
-
-    uint64_t offboard_setpoint_counter_;
-    VehicleLocalPosition vehicle_local_position_{};
-    bool has_position_{false};
-
-    Stage stage_;
-    bool delay_started_;
-    bool land_command_sent_;
-    rclcpp::Time approach_hold_start_time_;
-
-    bool has_tag_{false};
-    rclcpp::Time last_tag_time_;
-    float tag_px_x_{0.0f};
-    float tag_px_y_{0.0f};
-
-    float smooth_x_, smooth_y_, smooth_z_;
-
-    // Previous pixel errors for derivative term
-    float prev_err_x_px_;
-    float prev_err_y_px_;
+    void switchToStage(Stage s)
+    {
+        RCLCPP_INFO(this->get_logger(), "→ %s", stageName(s).c_str());
+        vel_x_integral_   = 0.0f;
+        vel_y_integral_   = 0.0f;
+        land_command_sent_ = false;
+        stage_ = s;
+    }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
-    static float clampf(float v, float lo, float hi)
+    bool checkTargetTimeout() const
     {
-        return std::max(lo, std::min(v, hi));
+        if (!tag_.valid()) return true;
+        return (this->now() - tag_.timestamp).seconds() > TARGET_TIMEOUT_S;
     }
 
-    float current_alt_m()
+    bool positionReached(const Eigen::Vector3f & target) const
     {
-        return -vehicle_local_position_.z;
+        if (!has_position_) return false;
+        Eigen::Vector3f pos(pos_.x, pos_.y, pos_.z);
+        Eigen::Vector3f vel(vel_.x, vel_.y, vel_.z);
+        return (target - pos).norm() < DELTA_POS && vel.norm() < DELTA_VEL;
     }
 
-    bool tag_is_fresh()
+    Tag getTagWorld(const Eigen::Vector3d & cam_pos, const Eigen::Quaterniond & cam_ori)
     {
-        if (!has_tag_) return false;
-        return (this->get_clock()->now() - last_tag_time_).seconds() < TAG_TIMEOUT_SEC;
+        Eigen::Matrix3d R_opt_to_ned;
+        R_opt_to_ned <<  0, -1,  0,
+                         1,  0,  0,
+                         0,  0,  1;
+        Eigen::Quaterniond q_opt_to_ned(R_opt_to_ned);
+
+        Eigen::Vector3d    drone_pos(pos_.x, pos_.y, pos_.z);
+        Eigen::Quaterniond drone_ori(
+            has_attitude_ ? att_.q[0] : 1.0f,
+            has_attitude_ ? att_.q[1] : 0.0f,
+            has_attitude_ ? att_.q[2] : 0.0f,
+            has_attitude_ ? att_.q[3] : 0.0f);
+
+        Eigen::Affine3d drone_tf  = Eigen::Translation3d(drone_pos) * drone_ori;
+        Eigen::Affine3d camera_tf = Eigen::Translation3d(0, 0, CAM_OFFSET_Z) * q_opt_to_ned;
+        Eigen::Affine3d tag_tf    = Eigen::Translation3d(cam_pos) * cam_ori;
+        Eigen::Affine3d world_tf  = drone_tf * camera_tf * tag_tf;
+
+        Tag t;
+        t.position    = world_tf.translation();
+        t.orientation = Eigen::Quaterniond(world_tf.rotation());
+        t.timestamp   = this->now();
+        return t;
     }
 
-    void publish_smoothed_setpoint(float raw_x, float raw_y, float raw_z)
+    Eigen::Vector2f calculateVelocitySetpointXY()
     {
-        smooth_x_ = SMOOTH_ALPHA * raw_x + (1.0f - SMOOTH_ALPHA) * smooth_x_;
-        smooth_y_ = SMOOTH_ALPHA * raw_y + (1.0f - SMOOTH_ALPHA) * smooth_y_;
-        smooth_z_ = SMOOTH_ALPHA * raw_z + (1.0f - SMOOTH_ALPHA) * smooth_z_;
-        publish_trajectory_setpoint(smooth_x_, smooth_y_, smooth_z_);
+        float delta_x = pos_.x - static_cast<float>(tag_.position.x());
+        float delta_y = pos_.y - static_cast<float>(tag_.position.y());
+
+        vel_x_integral_ += delta_x;
+        vel_y_integral_ += delta_y;
+        vel_x_integral_ = std::clamp(vel_x_integral_, -MAX_VELOCITY, MAX_VELOCITY);
+        vel_y_integral_ = std::clamp(vel_y_integral_, -MAX_VELOCITY, MAX_VELOCITY);
+
+        float vx = -1.f * (delta_x * VEL_P_GAIN + vel_x_integral_ * VEL_I_GAIN);
+        float vy = -1.f * (delta_y * VEL_P_GAIN + vel_y_integral_ * VEL_I_GAIN);
+
+        vx = std::clamp(vx, -MAX_VELOCITY, MAX_VELOCITY);
+        vy = std::clamp(vy, -MAX_VELOCITY, MAX_VELOCITY);
+
+        return {vx, vy};
     }
 
     // ── Callbacks ─────────────────────────────────────────────────────────────
-    void vehicle_local_position_callback(const VehicleLocalPosition::SharedPtr msg)
+    void localPositionCallback(const VehicleLocalPosition::SharedPtr msg)
     {
-        vehicle_local_position_ = *msg;
+        pos_ = *msg;
+        vel_.x = msg->vx;
+        vel_.y = msg->vy;
+        vel_.z = msg->vz;
         has_position_ = true;
-        RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-            "POS  x:%.2f  y:%.2f  z:%.2f  alt:%.2f m",
-            msg->x, msg->y, msg->z, -msg->z);
     }
 
-    void apriltag_callback(const apriltag_msgs::msg::AprilTagDetectionArray::SharedPtr msg)
+    void attitudeCallback(const VehicleAttitude::SharedPtr msg)
     {
+        att_ = *msg;
+        has_attitude_ = true;
+    }
+
+    void landDetectedCallback(const VehicleLandDetected::SharedPtr msg)
+    {
+        land_detected_ = msg->landed;
+    }
+
+    void cameraInfoCallback(const sensor_msgs::msg::CameraInfo::SharedPtr msg)
+    {
+        if (has_camera_info_) return;
+        fx_ = static_cast<float>(msg->k[0]);
+        fy_ = static_cast<float>(msg->k[4]);
+        cx_ = static_cast<float>(msg->k[2]);
+        cy_ = static_cast<float>(msg->k[5]);
+        has_camera_info_ = true;
+        RCLCPP_INFO(this->get_logger(),
+            "Camera info: fx=%.1f fy=%.1f cx=%.1f cy=%.1f",
+            fx_, fy_, cx_, cy_);
+    }
+
+    void apriltagCallback(const apriltag_msgs::msg::AprilTagDetectionArray::SharedPtr msg)
+    {
+        if (!has_camera_info_ || !has_position_ || !has_attitude_) return;
+
+        // Stop updating tag position once we've committed to landing
+        if (stage_ == Stage::COMMIT_LAND || stage_ == Stage::FINISHED) return;
+
         for (const auto & det : msg->detections) {
-            if (det.id == TARGET_TAG_ID) {
-                tag_px_x_ = static_cast<float>(det.centre.x);
-                tag_px_y_ = static_cast<float>(det.centre.y);
-                last_tag_time_ = this->get_clock()->now();
-                has_tag_ = true;
-                RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 300,
-                    "TAG %d  px_x:%.1f  px_y:%.1f", TARGET_TAG_ID, tag_px_x_, tag_px_y_);
-                break;
-            }
+            if (det.id != TARGET_TAG_ID) continue;
+
+            const float alt = -pos_.z;
+            if (alt < 0.05f) break;
+
+            const float u  = static_cast<float>(det.centre.x);
+            const float v  = static_cast<float>(det.centre.y);
+            const float xn = (u - cx_) / fx_;
+            const float yn = (v - cy_) / fy_;
+
+            Eigen::Vector3d    cam_pos(xn * alt, yn * alt, alt);
+            Eigen::Quaterniond cam_ori = Eigen::Quaterniond::Identity();
+
+            tag_ = getTagWorld(cam_pos, cam_ori);
+
+            RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 300,
+                "TAG %d  world=(%.2f,%.2f,%.2f)  drone=(%.2f,%.2f,%.2f)",
+                TARGET_TAG_ID,
+                tag_.position.x(), tag_.position.y(), tag_.position.z(),
+                pos_.x, pos_.y, pos_.z);
+            break;
         }
     }
 
     // ── Main timer ────────────────────────────────────────────────────────────
-    void timer_callback()
+    void timerCallback()
     {
-        publish_offboard_control_mode();
+        publishOffboardControlMode();
 
         if (offboard_setpoint_counter_ < 10) {
-            publish_smoothed_setpoint(0.0f, 0.0f, -1.0f);
+            publishTrajectorySetpointPos(0.0f, 0.0f, -1.0f);
             offboard_setpoint_counter_++;
             return;
         }
 
         if (offboard_setpoint_counter_ == 10) {
             if (!has_position_) {
-                publish_smoothed_setpoint(0.0f, 0.0f, -1.0f);
+                publishTrajectorySetpointPos(0.0f, 0.0f, -1.0f);
                 RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-                    "Waiting for position estimate...");
+                    "Waiting for position...");
                 return;
             }
-            publish_vehicle_command(VehicleCommand::VEHICLE_CMD_DO_SET_MODE, 1.0f, 6.0f);
+            publishVehicleCommand(VehicleCommand::VEHICLE_CMD_DO_SET_MODE, 1.0f, 6.0f);
             arm();
             offboard_setpoint_counter_++;
             return;
         }
 
-        float target_x = APPROACH_X;
-        float target_y = APPROACH_Y;
-        float target_z = APPROACH_Z;
+        const bool target_lost = checkTargetTimeout();
+
+        if (target_lost && !target_lost_prev_)
+            RCLCPP_WARN(this->get_logger(), "Target lost in %s", stageName(stage_).c_str());
+        else if (!target_lost && target_lost_prev_)
+            RCLCPP_INFO(this->get_logger(), "Target acquired");
+        target_lost_prev_ = target_lost;
+
+        const float alt = -pos_.z;  // positive metres AGL
 
         switch (stage_)
         {
         // ── 1. Fly to approach point ──────────────────────────────────────────
-        case Stage::TAKEOFF_TO_APPROACH:
+        case Stage::INIT:
+        case Stage::FLY_TO_APPROACH:
         {
-            const float dx     = vehicle_local_position_.x - APPROACH_X;
-            const float dy     = vehicle_local_position_.y - APPROACH_Y;
-            const float dz     = vehicle_local_position_.z - APPROACH_Z;
-            const float xy_err = std::sqrt(dx*dx + dy*dy);
+            publishTrajectorySetpointPos(APPROACH_X, APPROACH_Y, APPROACH_Z);
 
             RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-                "APPROACH  xy_err:%.2f  z_err:%.2f", xy_err, std::fabs(dz));
+                "FLY_TO_APPROACH  pos=(%.1f,%.1f,%.1f)  alt=%.2f",
+                pos_.x, pos_.y, pos_.z, alt);
 
-            if (has_position_ && xy_err < XY_REACHED_THRESH && std::fabs(dz) < Z_REACHED_THRESH) {
-                if (!delay_started_) {
-                    delay_started_ = true;
-                    approach_hold_start_time_ = this->get_clock()->now();
-                    RCLCPP_INFO(this->get_logger(), "AT APPROACH — holding 2 s");
-                }
-                if ((this->get_clock()->now() - approach_hold_start_time_).seconds() > 2.0) {
-                    stage_ = Stage::HOVER_AT_APPROACH;
-                    delay_started_ = false;
-                    RCLCPP_INFO(this->get_logger(), "→ HOVER_AT_APPROACH");
-                }
+            if (!target_lost) {
+                approach_altitude_ = pos_.z;
+                switchToStage(Stage::DESCEND);
             }
             break;
         }
 
-        // ── 2. Hover and wait for tag ─────────────────────────────────────────
-        case Stage::HOVER_AT_APPROACH:
+        // ── 2. Vision-guided descent ──────────────────────────────────────────
+        case Stage::DESCEND:
         {
-            if (tag_is_fresh()) {
-                // Reset derivative state when entering vision mode
-                prev_err_x_px_ = tag_px_x_ - (IMAGE_WIDTH  * 0.5f);
-                prev_err_y_px_ = tag_px_y_ - (IMAGE_HEIGHT * 0.5f);
-                stage_ = Stage::VISION_LANDING;
-                RCLCPP_INFO(this->get_logger(), "TAG ACQUIRED → VISION_LANDING");
+            // Commit to landing when close enough — stop all tracking
+            if (alt < COMMIT_LAND_ALT) {
+                switchToStage(Stage::COMMIT_LAND);
+                break;
             }
-            break;
-        }
 
-        // ── 3. Vision-guided descent ──────────────────────────────────────────
-        case Stage::VISION_LANDING:
-        {
-            if (!tag_is_fresh()) {
-                target_x = APPROACH_X;
-                target_y = APPROACH_Y;
-                target_z = APPROACH_Z;
-                // Reset derivative so there's no spike when tag reappears
-                prev_err_x_px_ = 0.0f;
-                prev_err_y_px_ = 0.0f;
+            if (target_lost) {
+                publishTrajectorySetpointPos(APPROACH_X, APPROACH_Y, APPROACH_Z);
                 RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-                    "TAG LOST — returning to approach point");
+                    "Tag lost — returning to approach");
+                switchToStage(Stage::FLY_TO_APPROACH);
                 break;
             }
 
-            // Current pixel error
-            const float err_x_px = tag_px_x_ - (IMAGE_WIDTH  * 0.5f);
-            const float err_y_px = tag_px_y_ - (IMAGE_HEIGHT * 0.5f);
+            const float descent_vel = (alt < DESCENT_SLOW_ALT)
+                ? DESCENT_VEL_SLOW
+                : DESCENT_VEL_FAST;
 
-            // Derivative: change in error since last tick
-            const float derr_x = err_x_px - prev_err_x_px_;
-            const float derr_y = err_y_px - prev_err_y_px_;
-            prev_err_x_px_ = err_x_px;
-            prev_err_y_px_ = err_y_px;
+            Eigen::Vector2f vel_xy = calculateVelocitySetpointXY();
+            publishTrajectorySetpointVel(vel_xy.x(), vel_xy.y(), descent_vel);
 
-            // Normalise errors to [-1, 1]
-            const float err_x_n  = err_x_px / (IMAGE_WIDTH  * 0.5f);
-            const float err_y_n  = err_y_px / (IMAGE_HEIGHT * 0.5f);
-            const float derr_x_n = derr_x   / (IMAGE_WIDTH  * 0.5f);
-            const float derr_y_n = derr_y   / (IMAGE_HEIGHT * 0.5f);
+            RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 300,
+                "DESCEND  tag=(%.2f,%.2f)  drone=(%.2f,%.2f)  alt=%.2f  vz=%.2f",
+                tag_.position.x(), tag_.position.y(),
+                pos_.x, pos_.y, alt, descent_vel);
 
-            // PD correction in local NED frame
-            // If drone moves AWAY from tag: flip the relevant SIGN constant
-            const float step_x = clampf(
-                SIGN_X_FROM_IMG_Y * (VISION_KP_XY * err_y_n + VISION_KD_XY * derr_y_n),
-                -MAX_STEP_XY, MAX_STEP_XY);
-
-            const float step_y = clampf(
-                SIGN_Y_FROM_IMG_X * (VISION_KP_XY * err_x_n + VISION_KD_XY * derr_x_n),
-                -MAX_STEP_XY, MAX_STEP_XY);
-
-            target_x = vehicle_local_position_.x + step_x;
-            target_y = vehicle_local_position_.y + step_y;
-
-            const float alt      = current_alt_m();
-            const float dist_px  = std::sqrt(err_x_px*err_x_px + err_y_px*err_y_px);
-
-            // If tag is within the hard landing zone — stop correcting, just land now
-            static constexpr float LAND_NOW_TOL_PX = 600.0f;  // ~9% of frame, tune this
-            if (dist_px < LAND_NOW_TOL_PX && !land_command_sent_) {
-                land();
-                land_command_sent_ = true;
-                stage_ = Stage::LAND_SENT;
-                RCLCPP_INFO(this->get_logger(), "TAG IN LANDING ZONE (%.1f px) → LAND NOW", dist_px);
-                break;
+            if (land_detected_) {
+                switchToStage(Stage::FINISHED);
             }
-
-            const bool  centered = dist_px < CENTER_TOL_PX;
-
-            if (centered) {
-                // Tag is reasonably in frame — descend
-                target_z = vehicle_local_position_.z + DESCENT_STEP;
-
-                if (alt < LAND_ALT_M && !land_command_sent_) {
-                    land();
-                    land_command_sent_ = true;
-                    stage_ = Stage::LAND_SENT;
-                    RCLCPP_INFO(this->get_logger(), "LOW & CENTERED → LAND SENT");
-                }
-            } else {
-                // Tag is far off-centre — hold altitude, correct XY
-                target_z = vehicle_local_position_.z;
-            }
-
-            RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 200,
-                "VISION  err:(%.1f,%.1f) dist:%.1f tol:%.0f centered:%d  alt:%.2f  sp:(%.2f %.2f %.2f)",
-                err_x_px, err_y_px, dist_px, CENTER_TOL_PX, (int)centered,
-                alt, target_x, target_y, target_z);
-
             break;
         }
 
-        // ── 4. Landing in progress ────────────────────────────────────────────
-        case Stage::LAND_SENT:
+        // ── 3. Below 0.3 m — stop tracking, send NAV_LAND and hold ───────────
+        case Stage::COMMIT_LAND:
         {
-            target_x = vehicle_local_position_.x;
-            target_y = vehicle_local_position_.y;
-            target_z = vehicle_local_position_.z;
+            if (!land_command_sent_) {
+                publishVehicleCommand(VehicleCommand::VEHICLE_CMD_NAV_LAND);
+                land_command_sent_ = true;
+                RCLCPP_INFO(this->get_logger(),
+                    "COMMIT_LAND at alt=%.2f m — NAV_LAND sent, tracking stopped", alt);
+            }
+
+            // Keep sending a stable position hold so offboard doesn't time out
+            // before PX4 transitions to land mode
+            publishTrajectorySetpointPos(pos_.x, pos_.y, pos_.z);
+
+            if (land_detected_) {
+                switchToStage(Stage::FINISHED);
+            }
+            break;
+        }
+
+        case Stage::FINISHED:
+        {
+            RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                "Landed successfully.");
             break;
         }
         }
-
-        publish_smoothed_setpoint(target_x, target_y, target_z);
     }
 
     // ── PX4 helpers ───────────────────────────────────────────────────────────
     void arm()
     {
-        publish_vehicle_command(VehicleCommand::VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.0f);
-        RCLCPP_INFO(this->get_logger(), "ARM COMMAND SENT");
+        publishVehicleCommand(VehicleCommand::VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.0f);
+        RCLCPP_INFO(this->get_logger(), "ARM SENT");
     }
 
-    void land()
-    {
-        publish_vehicle_command(VehicleCommand::VEHICLE_CMD_NAV_LAND);
-        RCLCPP_INFO(this->get_logger(), "LAND COMMAND SENT");
-    }
-
-    void publish_offboard_control_mode()
+    void publishOffboardControlMode()
     {
         OffboardControlMode msg{};
-        msg.position  = true;
-        msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
+        msg.position     = (stage_ != Stage::DESCEND);
+        msg.velocity     = (stage_ == Stage::DESCEND);
+        msg.acceleration = false;
+        msg.attitude     = false;
+        msg.body_rate    = false;
+        msg.timestamp    = this->now().nanoseconds() / 1000;
         offboard_control_mode_publisher_->publish(msg);
     }
 
-    void publish_trajectory_setpoint(float x, float y, float z)
+    void publishTrajectorySetpointPos(float x, float y, float z)
     {
         TrajectorySetpoint msg{};
         msg.position  = {x, y, z};
+        msg.velocity  = {NAN, NAN, NAN};
         msg.yaw       = 0.0f;
-        msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
+        msg.timestamp = this->now().nanoseconds() / 1000;
         trajectory_setpoint_publisher_->publish(msg);
     }
 
-    void publish_vehicle_command(uint16_t command, float param1 = 0.0f, float param2 = 0.0f)
+    void publishTrajectorySetpointVel(float vx, float vy, float vz)
+    {
+        TrajectorySetpoint msg{};
+        msg.position  = {NAN, NAN, NAN};
+        msg.velocity  = {vx, vy, vz};
+        msg.yaw       = 0.0f;
+        msg.timestamp = this->now().nanoseconds() / 1000;
+        trajectory_setpoint_publisher_->publish(msg);
+    }
+
+    void publishVehicleCommand(uint16_t command, float param1 = 0.0f, float param2 = 0.0f)
     {
         VehicleCommand msg{};
         msg.command          = command;
@@ -398,12 +445,47 @@ private:
         msg.source_system    = 1;
         msg.source_component = 1;
         msg.from_external    = true;
-        msg.timestamp        = this->get_clock()->now().nanoseconds() / 1000;
+        msg.timestamp        = this->now().nanoseconds() / 1000;
         vehicle_command_publisher_->publish(msg);
     }
+
+    // ── Members ───────────────────────────────────────────────────────────────
+    rclcpp::TimerBase::SharedPtr timer_;
+    rclcpp::Publisher<OffboardControlMode>::SharedPtr  offboard_control_mode_publisher_;
+    rclcpp::Publisher<TrajectorySetpoint>::SharedPtr   trajectory_setpoint_publisher_;
+    rclcpp::Publisher<VehicleCommand>::SharedPtr       vehicle_command_publisher_;
+
+    rclcpp::Subscription<VehicleLocalPosition>::SharedPtr  vehicle_local_position_sub_;
+    rclcpp::Subscription<VehicleAttitude>::SharedPtr       vehicle_attitude_sub_;
+    rclcpp::Subscription<VehicleLandDetected>::SharedPtr   land_detected_sub_;
+    rclcpp::Subscription<apriltag_msgs::msg::AprilTagDetectionArray>::SharedPtr apriltag_sub_;
+    rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr camera_info_sub_;
+
+    uint64_t offboard_setpoint_counter_{0};
+
+    VehicleLocalPosition pos_{};
+    struct { float x{0}, y{0}, z{0}; } vel_;
+    VehicleAttitude att_{};
+    bool has_position_{false};
+    bool has_attitude_{false};
+
+    bool land_detected_{false};
+    bool target_lost_prev_{false};
+    bool land_command_sent_{false};
+
+    Tag   tag_{};
+    Stage stage_{Stage::INIT};
+    float approach_altitude_{-3.0f};
+
+    float vel_x_integral_{0.0f};
+    float vel_y_integral_{0.0f};
+
+    float fx_{554.0f}, fy_{554.0f};
+    float cx_{320.0f}, cy_{240.0f};
+    bool  has_camera_info_{false};
 };
 
-int main(int argc, char *argv[])
+int main(int argc, char * argv[])
 {
     std::cout << "MAIN STARTED" << std::endl;
     setvbuf(stdout, NULL, _IONBF, BUFSIZ);
