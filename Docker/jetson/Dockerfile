@@ -113,15 +113,6 @@ RUN cd /tmp && \
     make install && \
     cd / && rm -rf /tmp/librealsense-2.53.1 /tmp/v2.53.1.tar.gz
 
-# Clone and build ROS workspace
-RUN cd /tmp && \
-    git clone https://github.com/mcgill-robotics/drone-capstone && \
-    source /opt/ros/humble/setup.bash && \
-    cd drone-capstone/ros2_ws && \
-    colcon build && \
-    source install/setup.bash && \
-    cd / && rm -rf /tmp/drone-capstone
-
 # Build PX4 SITL (strip any stray opencv refs from the setup script first)
 RUN cd /tmp && \
     git clone https://github.com/mcgill-robotics/PX4-Autopilot.git --recursive && \
@@ -130,6 +121,27 @@ RUN cd /tmp && \
     bash ./Tools/setup/ubuntu.sh && \
     make px4_sitl && \
     cd / && rm -rf /tmp/PX4-Autopilot
+
+# Install gz dev headers (OSRF repo required; runtime libs already present but headers are not)
+RUN curl -sSL https://packages.osrfoundation.org/gazebo.gpg \
+        -o /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] \
+        http://packages.osrfoundation.org/gazebo/ubuntu-stable jammy main" \
+        > /etc/apt/sources.list.d/gazebo-stable.list && \
+    apt-get update -qq && \
+    apt-get install -y --no-install-recommends \
+        libgz-transport13-dev \
+        libgz-msgs10-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Clone and build ROS workspace
+RUN cd /tmp && \
+    git clone https://github.com/mcgill-robotics/drone-capstone -b ros2hotfix_gazebofail && \
+    source /opt/ros/humble/setup.bash && \
+    cd drone-capstone/ros2_ws && \
+    colcon build && \
+    source install/setup.bash && \
+    cd / && rm -rf /tmp/drone-capstone
 
 # udev rules for RealSense cameras
 RUN echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0b37", MODE="0666", GROUP="plugdev"' > /etc/udev/rules.d/99-realsense-libusb.rules && \

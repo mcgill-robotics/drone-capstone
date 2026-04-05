@@ -12,6 +12,12 @@
   <depend>rclcpp</depend>
   <depend>sensor_msgs</depend>
 
+  <build_depend>gz-transport13</build_depend>
+  <build_depend>gz-msgs10</build_depend>
+
+<exec_depend>gz-transport13</exec_depend>
+<exec_depend>gz-msgs10</exec_depend>
+
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
 
