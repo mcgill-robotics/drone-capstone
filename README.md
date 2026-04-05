@@ -41,7 +41,7 @@ PX4_GZ_WORLD=apriltag make px4_sitl gz_x500_mono_cam_down NAV_DLL_ACT=0 HEADLESS
 
 ### Terminal 2 in Container
 ```bash
-cd drone_capstone
+cd drone-capstone/Docker/jetson
 cd ros2_ws
 colcon build
 source install/setup.bash
