@@ -161,4 +161,11 @@ RUN echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc && \
     echo "export ROS_DOMAIN_ID=0" >> ~/.bashrc && \
     echo "export RMW_IMPLEMENTATION=rmw_fastrtps_cpp" >> ~/.bashrc && \
     echo "source /ros_entrypoint.sh" >> ~/.bashrc && \
+    echo "alias cb='cd /drone-capstone/ros2_ws && rm -rf build install log && colcon build && source install/setup.bash'" >> ~/.bashrc && \
+    echo "alias b='cd /drone-capstone/ros2_ws && colcon build && source install/setup.bash'" >> ~/.bashrc && \
+    echo "alias martin='cd /PX4-Autopilot && PX4_GZ_WORLD=apriltag make px4_sitl gz_x500_mono_cam_down NAV_DLL_ACT=0'" >> ~/.bashrc && \
+    echo "alias jp='cd /PX4-Autopilot && PX4_GZ_WORLD=apriltag make px4_sitl gz_x500_mono_cam_down NAV_DLL_ACT=0 HEADLESS=1'" >> ~/.bashrc && \
+    echo "alias mission='cd /drone-capstone/ros2_ws && source install/setup.bash && ros2 run precision_land_apriltag precision_land_apriltag_node'" >> ~/.bashrc && \
+    echo "alias missionb='cd /drone-capstone/ros2_ws && colcon build --packages-select precision_land_apriltag && source install/setup.bash && ros2 run precision_land_apriltag precision_land_apriltag_node'" >> ~/.bashrc && \
+    echo "alias viz='ros2 run rqt_image_view rqt_image_view --clear-config'" >> ~/.bashrc && \
     echo "tmux" >> ~/.bashrc
