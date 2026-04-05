@@ -47,12 +47,12 @@ source install/setup.bash
 ros2 launch bringup sim.launch
 ```
 
-# Terminal 3 in Container
+### Terminal 3 in Container
 ```bash
 ros2 run precision_land_apriltag precision_land_apriltag_node
 ```
 
-# Terminal 4 in Container
+### Terminal 4 in Container
 ```bash
 ros2 run rqt_image_view rqt_image_view --clear-config
 ```
