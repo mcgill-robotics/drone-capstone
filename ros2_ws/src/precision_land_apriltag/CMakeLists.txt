@@ -16,6 +16,7 @@ find_package(apriltag_msgs REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(sensor_msgs REQUIRED)
 
+# ===== Main node =====
 add_executable(precision_land_apriltag_node
   src/precision_land_apriltag.cpp
 )
@@ -32,8 +33,27 @@ target_link_libraries(precision_land_apriltag_node
   Eigen3::Eigen
 )
 
+# ===== Test node =====
+add_executable(apriltag_detect_test_node
+  src/apriltag_detect_test.cpp
+)
+
+ament_target_dependencies(apriltag_detect_test_node
+  rclcpp
+  px4_msgs
+  px4_ros2_cpp
+  apriltag_msgs
+  sensor_msgs
+)
+
+target_link_libraries(apriltag_detect_test_node
+  Eigen3::Eigen
+)
+
+# ===== Install =====
 install(TARGETS
   precision_land_apriltag_node
+  apriltag_detect_test_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
