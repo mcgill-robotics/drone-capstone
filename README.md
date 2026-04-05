@@ -15,7 +15,7 @@
 ## Jetson Command
 ```bash
 xhost +local:docker
-cd drone_capstone
+cd drone-capstone/Docker/jetson
 docker compose up -d
 docker exec -it t265-jetson bash
 ```
@@ -41,8 +41,7 @@ PX4_GZ_WORLD=apriltag make px4_sitl gz_x500_mono_cam_down NAV_DLL_ACT=0 HEADLESS
 
 ### Terminal 2 in Container
 ```bash
-cd drone-capstone/Docker/jetson
-cd ros2_ws
+cd drone-capstone/ros2_ws
 colcon build
 source install/setup.bash
 ros2 launch bringup sim.launch
