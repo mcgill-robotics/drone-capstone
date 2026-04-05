@@ -27,7 +27,6 @@ class OffboardControl : public rclcpp::Node
 public:
     OffboardControl() : Node("offboard_control")
     {
-        // ── Publishers ────────────────────────────────────────────────────────
         offboard_control_mode_publisher_ =
             this->create_publisher<OffboardControlMode>("/fmu/in/offboard_control_mode", 10);
         trajectory_setpoint_publisher_ =
@@ -35,7 +34,6 @@ public:
         vehicle_command_publisher_ =
             this->create_publisher<VehicleCommand>("/fmu/in/vehicle_command", 10);
 
-        // ── Subscribers ───────────────────────────────────────────────────────
         rclcpp::QoS qos_be(rclcpp::KeepLast(10));
         qos_be.best_effort();
 
@@ -67,42 +65,59 @@ public:
                 std::bind(&OffboardControl::cameraInfoCallback, this, std::placeholders::_1));
 
         offboard_setpoint_counter_ = 0;
-        stage_ = Stage::INIT;
-        land_detected_ = false;
-        target_lost_prev_ = false;
+        stage_             = Stage::INIT;
+        land_detected_     = false;
+        target_lost_prev_  = false;
         land_command_sent_ = false;
+        disarm_sent_       = false;
 
         resetTag();
 
         timer_ = this->create_wall_timer(100ms, std::bind(&OffboardControl::timerCallback, this));
-
         RCLCPP_INFO(this->get_logger(), "OffboardControl started");
     }
 
 private:
     // ── Parameters ────────────────────────────────────────────────────────────
-    static constexpr int    TARGET_TAG_ID      = 11;
-    static constexpr float  APPROACH_X         = 12.0f;
-    static constexpr float  APPROACH_Y         =  0.0f;
-    static constexpr float  APPROACH_Z         = -10.0f;   // 10 m AGL in NED
 
-    // Descent speeds
-    static constexpr float  DESCENT_VEL_FAST   =  0.3f;   // m/s above SLOW_ALT
-    static constexpr float  DESCENT_VEL_SLOW   =  0.08f;  // m/s below SLOW_ALT
-    static constexpr float  DESCENT_SLOW_ALT   =  1.0f;   // m AGL — start slowing here
+    // Tag IDs
+    static constexpr int    HOME_TAG_ID      = 9;    // tag at takeoff position (0,0)
+    static constexpr int    TARGET_TAG_ID    = 11;   // tag to land on
 
-    // At this altitude stop all tracking and just commit to NAV_LAND
-    static constexpr float  COMMIT_LAND_ALT    =  0.30f;  // m AGL
+    // Takeoff
+    static constexpr float  TAKEOFF_X        =  0.0f;
+    static constexpr float  TAKEOFF_Y        =  0.0f;
+    static constexpr float  TAKEOFF_ALT      = -5.0f;   // 5 m AGL in NED
 
-    // XY controller
-    static constexpr float  VEL_P_GAIN         =  0.6f;
-    static constexpr float  VEL_I_GAIN         =  0.0f;
-    static constexpr float  MAX_VELOCITY       =  0.8f;
+    // Cruise altitude — climb here before flying to target XY
+    static constexpr float  CRUISE_ALT       = -10.0f;  // 10 m AGL in NED
 
-    static constexpr float  TARGET_TIMEOUT_S   =  1.0f;
-    static constexpr float  DELTA_POS          =  0.30f;
-    static constexpr float  DELTA_VEL          =  0.25f;
-    static constexpr double CAM_OFFSET_Z       = -0.1;
+    // Target approach waypoint (XY of tag 11, cruise altitude)
+    static constexpr float  APPROACH_X       = 11.0f;
+    static constexpr float  APPROACH_Y       =  1.0f;
+
+    // Descend from cruise to this altitude before starting precision landing
+    static constexpr float  APPROACH_Z       = -5.0f;   // 5 m AGL in NED
+
+    // Arrival radius and speed for waypoint checks
+    static constexpr float  WP_ARRIVE_RADIUS = 1.0f;
+    static constexpr float  WP_ARRIVE_VEL    = 0.3f;
+
+    // Precision descent
+    static constexpr float  DESCENT_VEL_FAST =  0.3f;
+    static constexpr float  DESCENT_VEL_SLOW =  0.08f;
+    static constexpr float  DESCENT_SLOW_ALT =  1.0f;
+    static constexpr float  COMMIT_LAND_ALT  =  0.30f;
+
+    // XY velocity controller
+    static constexpr float  VEL_P_GAIN       =  0.4f;
+    static constexpr float  VEL_I_GAIN       =  0.0f;
+    static constexpr float  MAX_VELOCITY     =  0.6f;
+
+    static constexpr float  TARGET_TIMEOUT_S =  1.0f;
+    static constexpr double DISARM_TIMEOUT_S =  5.0;
+    static constexpr double CAM_OFFSET_Z     = -0.1;
+    static constexpr float  TAG_EMA_ALPHA    =  0.3f;
 
     // ── Internal tag struct ───────────────────────────────────────────────────
     struct Tag {
@@ -117,6 +132,8 @@ private:
         tag_.position    = {NAN, NAN, NAN};
         tag_.orientation = Eigen::Quaterniond::Identity();
         tag_.timestamp   = rclcpp::Time(0, 0, RCL_ROS_TIME);
+        tag_ema_init_    = false;
+        tag_ema_         = {NAN, NAN, NAN};
         vel_x_integral_  = 0.0f;
         vel_y_integral_  = 0.0f;
     }
@@ -124,46 +141,59 @@ private:
     // ── State machine ─────────────────────────────────────────────────────────
     enum class Stage {
         INIT,
-        FLY_TO_APPROACH,
-        DESCEND,
-        COMMIT_LAND,   // below COMMIT_LAND_ALT — no more tracking, just land
+        TAKEOFF,              // climb to 5 m above home (0,0)
+        VERIFY_HOME_TAG,      // hover at 5 m, wait to see tag 9 below
+        CLIMB_TO_CRUISE,      // climb to 10 m at same XY
+        FLY_TO_APPROACH_XY,   // fly to target XY at 10 m
+        DESCEND_TO_APPROACH,  // descend from 10 m to 5 m above target
+        WAIT_FOR_TARGET_TAG,  // hover at 5 m above target, wait for tag 11
+        DESCEND,              // precision vision-guided descent
+        COMMIT_LAND,          // below 0.3 m — send NAV_LAND and disarm
         FINISHED
     };
 
     std::string stageName(Stage s) const
     {
         switch (s) {
-            case Stage::INIT:            return "INIT";
-            case Stage::FLY_TO_APPROACH: return "FLY_TO_APPROACH";
-            case Stage::DESCEND:         return "DESCEND";
-            case Stage::COMMIT_LAND:     return "COMMIT_LAND";
-            case Stage::FINISHED:        return "FINISHED";
-            default:                     return "UNKNOWN";
+            case Stage::INIT:                 return "INIT";
+            case Stage::TAKEOFF:              return "TAKEOFF";
+            case Stage::VERIFY_HOME_TAG:      return "VERIFY_HOME_TAG";
+            case Stage::CLIMB_TO_CRUISE:      return "CLIMB_TO_CRUISE";
+            case Stage::FLY_TO_APPROACH_XY:   return "FLY_TO_APPROACH_XY";
+            case Stage::DESCEND_TO_APPROACH:  return "DESCEND_TO_APPROACH";
+            case Stage::WAIT_FOR_TARGET_TAG:  return "WAIT_FOR_TARGET_TAG";
+            case Stage::DESCEND:              return "DESCEND";
+            case Stage::COMMIT_LAND:          return "COMMIT_LAND";
+            case Stage::FINISHED:             return "FINISHED";
+            default:                          return "UNKNOWN";
         }
     }
 
     void switchToStage(Stage s)
     {
         RCLCPP_INFO(this->get_logger(), "→ %s", stageName(s).c_str());
-        vel_x_integral_   = 0.0f;
-        vel_y_integral_   = 0.0f;
+        vel_x_integral_    = 0.0f;
+        vel_y_integral_    = 0.0f;
         land_command_sent_ = false;
         stage_ = s;
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+    bool arrivedAt(float tx, float ty, float tz) const
+    {
+        if (!has_position_) return false;
+        const float dx   = pos_.x - tx;
+        const float dy   = pos_.y - ty;
+        const float dz   = pos_.z - tz;
+        const float dist = std::sqrt(dx*dx + dy*dy + dz*dz);
+        const float spd  = std::sqrt(vel_.x*vel_.x + vel_.y*vel_.y + vel_.z*vel_.z);
+        return dist < WP_ARRIVE_RADIUS && spd < WP_ARRIVE_VEL;
+    }
+
     bool checkTargetTimeout() const
     {
         if (!tag_.valid()) return true;
         return (this->now() - tag_.timestamp).seconds() > TARGET_TIMEOUT_S;
-    }
-
-    bool positionReached(const Eigen::Vector3f & target) const
-    {
-        if (!has_position_) return false;
-        Eigen::Vector3f pos(pos_.x, pos_.y, pos_.z);
-        Eigen::Vector3f vel(vel_.x, vel_.y, vel_.z);
-        return (target - pos).norm() < DELTA_POS && vel.norm() < DELTA_VEL;
     }
 
     Tag getTagWorld(const Eigen::Vector3d & cam_pos, const Eigen::Quaterniond & cam_ori)
@@ -193,6 +223,19 @@ private:
         return t;
     }
 
+    void updateTagEMA(const Tag & raw)
+    {
+        if (!tag_ema_init_) {
+            tag_ema_      = raw.position;
+            tag_ema_init_ = true;
+        } else {
+            tag_ema_ = TAG_EMA_ALPHA * raw.position + (1.0 - TAG_EMA_ALPHA) * tag_ema_;
+        }
+        tag_.position    = tag_ema_;
+        tag_.orientation = raw.orientation;
+        tag_.timestamp   = raw.timestamp;
+    }
+
     Eigen::Vector2f calculateVelocitySetpointXY()
     {
         float delta_x = pos_.x - static_cast<float>(tag_.position.x());
@@ -215,7 +258,7 @@ private:
     // ── Callbacks ─────────────────────────────────────────────────────────────
     void localPositionCallback(const VehicleLocalPosition::SharedPtr msg)
     {
-        pos_ = *msg;
+        pos_   = *msg;
         vel_.x = msg->vx;
         vel_.y = msg->vy;
         vel_.z = msg->vz;
@@ -249,32 +292,42 @@ private:
     void apriltagCallback(const apriltag_msgs::msg::AprilTagDetectionArray::SharedPtr msg)
     {
         if (!has_camera_info_ || !has_position_ || !has_attitude_) return;
-
-        // Stop updating tag position once we've committed to landing
         if (stage_ == Stage::COMMIT_LAND || stage_ == Stage::FINISHED) return;
 
+        const float alt = -pos_.z;
+        if (alt < 0.05f) return;
+
         for (const auto & det : msg->detections) {
-            if (det.id != TARGET_TAG_ID) continue;
 
-            const float alt = -pos_.z;
-            if (alt < 0.05f) break;
+            // ── Home tag (9) check during VERIFY_HOME_TAG ──────────────────────
+            if (det.id == HOME_TAG_ID && stage_ == Stage::VERIFY_HOME_TAG) {
+                home_tag_seen_ = true;
+                RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                    "Home tag 9 confirmed below");
+                continue;
+            }
 
-            const float u  = static_cast<float>(det.centre.x);
-            const float v  = static_cast<float>(det.centre.y);
-            const float xn = (u - cx_) / fx_;
-            const float yn = (v - cy_) / fy_;
+            // ── Target tag (11) — only process when past the cruise transit ────
+            if (det.id == TARGET_TAG_ID &&
+                (stage_ == Stage::WAIT_FOR_TARGET_TAG || stage_ == Stage::DESCEND))
+            {
+                const float u  = static_cast<float>(det.centre.x);
+                const float v  = static_cast<float>(det.centre.y);
+                const float xn = (u - cx_) / fx_;
+                const float yn = (v - cy_) / fy_;
 
-            Eigen::Vector3d    cam_pos(xn * alt, yn * alt, alt);
-            Eigen::Quaterniond cam_ori = Eigen::Quaterniond::Identity();
+                Eigen::Vector3d    cam_pos(xn * alt, yn * alt, alt);
+                Eigen::Quaterniond cam_ori = Eigen::Quaterniond::Identity();
 
-            tag_ = getTagWorld(cam_pos, cam_ori);
+                Tag raw = getTagWorld(cam_pos, cam_ori);
+                updateTagEMA(raw);
 
-            RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 300,
-                "TAG %d  world=(%.2f,%.2f,%.2f)  drone=(%.2f,%.2f,%.2f)",
-                TARGET_TAG_ID,
-                tag_.position.x(), tag_.position.y(), tag_.position.z(),
-                pos_.x, pos_.y, pos_.z);
-            break;
+                RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 300,
+                    "TAG 11  raw=(%.2f,%.2f)  ema=(%.2f,%.2f)  drone=(%.2f,%.2f)",
+                    raw.position.x(), raw.position.y(),
+                    tag_.position.x(), tag_.position.y(),
+                    pos_.x, pos_.y);
+            }
         }
     }
 
@@ -283,12 +336,14 @@ private:
     {
         publishOffboardControlMode();
 
+        // Pre-arm setpoints
         if (offboard_setpoint_counter_ < 10) {
             publishTrajectorySetpointPos(0.0f, 0.0f, -1.0f);
             offboard_setpoint_counter_++;
             return;
         }
 
+        // Arm + offboard once
         if (offboard_setpoint_counter_ == 10) {
             if (!has_position_) {
                 publishTrajectorySetpointPos(0.0f, 0.0f, -1.0f);
@@ -303,48 +358,121 @@ private:
         }
 
         const bool target_lost = checkTargetTimeout();
-
         if (target_lost && !target_lost_prev_)
             RCLCPP_WARN(this->get_logger(), "Target lost in %s", stageName(stage_).c_str());
         else if (!target_lost && target_lost_prev_)
             RCLCPP_INFO(this->get_logger(), "Target acquired");
         target_lost_prev_ = target_lost;
 
-        const float alt = -pos_.z;  // positive metres AGL
+        const float alt = -pos_.z;
 
         switch (stage_)
         {
-        // ── 1. Fly to approach point ──────────────────────────────────────────
+        // ── 1. Take off to 5 m above home ────────────────────────────────────
         case Stage::INIT:
-        case Stage::FLY_TO_APPROACH:
+        case Stage::TAKEOFF:
+        {
+            publishTrajectorySetpointPos(TAKEOFF_X, TAKEOFF_Y, TAKEOFF_ALT);
+
+            RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                "TAKEOFF  pos=(%.1f,%.1f,%.1f)  alt=%.2f",
+                pos_.x, pos_.y, pos_.z, alt);
+
+            if (arrivedAt(TAKEOFF_X, TAKEOFF_Y, TAKEOFF_ALT)) {
+                switchToStage(Stage::VERIFY_HOME_TAG);
+            }
+            break;
+        }
+
+        // ── 2. Hover at 5 m, confirm tag 9 is below ──────────────────────────
+        case Stage::VERIFY_HOME_TAG:
+        {
+            publishTrajectorySetpointPos(TAKEOFF_X, TAKEOFF_Y, TAKEOFF_ALT);
+
+            RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                "VERIFY_HOME_TAG  alt=%.2f  home_tag_seen=%d",
+                alt, (int)home_tag_seen_);
+
+            if (home_tag_seen_) {
+                RCLCPP_INFO(this->get_logger(), "Tag 9 confirmed — climbing to cruise altitude");
+                switchToStage(Stage::CLIMB_TO_CRUISE);
+            }
+            break;
+        }
+
+        // ── 3. Climb to 10 m at same XY ──────────────────────────────────────
+        case Stage::CLIMB_TO_CRUISE:
+        {
+            publishTrajectorySetpointPos(TAKEOFF_X, TAKEOFF_Y, CRUISE_ALT);
+
+            RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                "CLIMB_TO_CRUISE  alt=%.2f  target=%.1f", alt, -CRUISE_ALT);
+
+            if (arrivedAt(TAKEOFF_X, TAKEOFF_Y, CRUISE_ALT)) {
+                switchToStage(Stage::FLY_TO_APPROACH_XY);
+            }
+            break;
+        }
+
+        // ── 4. Fly to target XY at cruise altitude (10 m) ────────────────────
+        case Stage::FLY_TO_APPROACH_XY:
+        {
+            publishTrajectorySetpointPos(APPROACH_X, APPROACH_Y, CRUISE_ALT);
+
+            RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                "FLY_TO_APPROACH_XY  pos=(%.1f,%.1f)  target=(%.1f,%.1f)  alt=%.2f",
+                pos_.x, pos_.y, APPROACH_X, APPROACH_Y, alt);
+
+            if (arrivedAt(APPROACH_X, APPROACH_Y, CRUISE_ALT)) {
+                switchToStage(Stage::DESCEND_TO_APPROACH);
+            }
+            break;
+        }
+
+        // ── 5. Descend to 5 m above target ───────────────────────────────────
+        case Stage::DESCEND_TO_APPROACH:
         {
             publishTrajectorySetpointPos(APPROACH_X, APPROACH_Y, APPROACH_Z);
 
             RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-                "FLY_TO_APPROACH  pos=(%.1f,%.1f,%.1f)  alt=%.2f",
-                pos_.x, pos_.y, pos_.z, alt);
+                "DESCEND_TO_APPROACH  alt=%.2f  target=%.1f", alt, -APPROACH_Z);
+
+            if (arrivedAt(APPROACH_X, APPROACH_Y, APPROACH_Z)) {
+                resetTag();  // fresh EMA when we start looking for tag 11
+                switchToStage(Stage::WAIT_FOR_TARGET_TAG);
+            }
+            break;
+        }
+
+        // ── 6. Hover at 5 m, wait for tag 11 lock ────────────────────────────
+        case Stage::WAIT_FOR_TARGET_TAG:
+        {
+            publishTrajectorySetpointPos(APPROACH_X, APPROACH_Y, APPROACH_Z);
+
+            RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                "WAIT_FOR_TARGET_TAG  alt=%.2f  tag_valid=%d",
+                alt, (int)tag_.valid());
 
             if (!target_lost) {
-                approach_altitude_ = pos_.z;
+                RCLCPP_INFO(this->get_logger(), "Tag 11 locked — starting precision descent");
                 switchToStage(Stage::DESCEND);
             }
             break;
         }
 
-        // ── 2. Vision-guided descent ──────────────────────────────────────────
+        // ── 7. Precision vision-guided descent ────────────────────────────────
         case Stage::DESCEND:
         {
-            // Commit to landing when close enough — stop all tracking
             if (alt < COMMIT_LAND_ALT) {
                 switchToStage(Stage::COMMIT_LAND);
                 break;
             }
 
             if (target_lost) {
-                publishTrajectorySetpointPos(APPROACH_X, APPROACH_Y, APPROACH_Z);
+                // Hold current position until tag reappears
+                publishTrajectorySetpointPos(pos_.x, pos_.y, pos_.z);
                 RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
-                    "Tag lost — returning to approach");
-                switchToStage(Stage::FLY_TO_APPROACH);
+                    "Tag 11 lost — holding (%.2f,%.2f,%.2f)", pos_.x, pos_.y, pos_.z);
                 break;
             }
 
@@ -356,9 +484,10 @@ private:
             publishTrajectorySetpointVel(vel_xy.x(), vel_xy.y(), descent_vel);
 
             RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 300,
-                "DESCEND  tag=(%.2f,%.2f)  drone=(%.2f,%.2f)  alt=%.2f  vz=%.2f",
+                "DESCEND  tag=(%.2f,%.2f)  drone=(%.2f,%.2f)  alt=%.2f  vz=%.2f  vxy=(%.2f,%.2f)",
                 tag_.position.x(), tag_.position.y(),
-                pos_.x, pos_.y, alt, descent_vel);
+                pos_.x, pos_.y, alt, descent_vel,
+                vel_xy.x(), vel_xy.y());
 
             if (land_detected_) {
                 switchToStage(Stage::FINISHED);
@@ -366,21 +495,27 @@ private:
             break;
         }
 
-        // ── 3. Below 0.3 m — stop tracking, send NAV_LAND and hold ───────────
+        // ── 8. Below 0.3 m — stop tracking, land and disarm ──────────────────
         case Stage::COMMIT_LAND:
         {
             if (!land_command_sent_) {
                 publishVehicleCommand(VehicleCommand::VEHICLE_CMD_NAV_LAND);
                 land_command_sent_ = true;
+                land_cmd_time_     = this->now();
                 RCLCPP_INFO(this->get_logger(),
-                    "COMMIT_LAND at alt=%.2f m — NAV_LAND sent, tracking stopped", alt);
+                    "COMMIT_LAND at %.2f m — NAV_LAND sent", alt);
             }
 
-            // Keep sending a stable position hold so offboard doesn't time out
-            // before PX4 transitions to land mode
             publishTrajectorySetpointPos(pos_.x, pos_.y, pos_.z);
 
-            if (land_detected_) {
+            const double elapsed = (this->now() - land_cmd_time_).seconds();
+            if ((land_detected_ || elapsed > DISARM_TIMEOUT_S) && !disarm_sent_) {
+                publishVehicleCommand(
+                    VehicleCommand::VEHICLE_CMD_COMPONENT_ARM_DISARM, 0.0f);
+                disarm_sent_ = true;
+                RCLCPP_INFO(this->get_logger(),
+                    "DISARM sent (land_detected=%d, elapsed=%.1fs)",
+                    (int)land_detected_, elapsed);
                 switchToStage(Stage::FINISHED);
             }
             break;
@@ -389,7 +524,7 @@ private:
         case Stage::FINISHED:
         {
             RCLCPP_INFO_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                "Landed successfully.");
+                "Mission complete — landed and disarmed.");
             break;
         }
         }
@@ -405,8 +540,9 @@ private:
     void publishOffboardControlMode()
     {
         OffboardControlMode msg{};
-        msg.position     = (stage_ != Stage::DESCEND);
-        msg.velocity     = (stage_ == Stage::DESCEND);
+        const bool descending = (stage_ == Stage::DESCEND) && !checkTargetTimeout();
+        msg.position     = !descending;
+        msg.velocity     = descending;
         msg.acceleration = false;
         msg.attitude     = false;
         msg.body_rate    = false;
@@ -472,10 +608,16 @@ private:
     bool land_detected_{false};
     bool target_lost_prev_{false};
     bool land_command_sent_{false};
+    bool disarm_sent_{false};
+    bool home_tag_seen_{false};
 
     Tag   tag_{};
     Stage stage_{Stage::INIT};
-    float approach_altitude_{-3.0f};
+
+    Eigen::Vector3d tag_ema_{NAN, NAN, NAN};
+    bool            tag_ema_init_{false};
+
+    rclcpp::Time land_cmd_time_{0, 0, RCL_ROS_TIME};
 
     float vel_x_integral_{0.0f};
     float vel_y_integral_{0.0f};
