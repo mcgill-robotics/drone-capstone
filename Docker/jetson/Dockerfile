@@ -18,10 +18,7 @@ RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
 
 # Install apt packages
 RUN apt-get update -qq && \
-    apt-get remove -y opencv-dev opencv-libs opencv-main 'libopencv*' || true && \
-    apt-get autoremove -y && \
     apt-get install -y -qq --no-install-recommends \
-        -o Dpkg::Options::="--force-overwrite" \
         git \
         tmux \
         vim \
@@ -79,24 +76,10 @@ RUN apt-get update -qq && \
     && rm -rf /var/lib/apt/lists/*
 
 # Install required pip packages
-RUN pip3 install --upgrade pip pyros-genmsg setuptools
-
-# Build Micro-XRCE-DDS-Agent for PX4
-RUN cd /tmp && \
-    git clone -b v2.4.3 https://github.com/eProsima/Micro-XRCE-DDS-Agent.git && \
-    cd Micro-XRCE-DDS-Agent && \
-    mkdir build && cd build && \
-    cmake .. && \
-    make -j"$(nproc)" && \
-    make install && \
-    ldconfig /usr/local/lib/ && \
-    cd / && rm -rf /tmp/Micro-XRCE-DDS-Agent
-
-# Initialize rosdep
-RUN rosdep init 2>/dev/null || true && \
-    rosdep update
+# RUN pip3 install --upgrade pip pyros-genmsg setuptools
 
 # Build librealsense 2.53.1 (T265 last working version)
+# We DISABLE examples to avoid any hard dependency on OpenCV here.
 RUN cd /tmp && \
     wget https://github.com/IntelRealSense/librealsense/archive/refs/tags/v2.53.1.tar.gz && \
     tar -xzf v2.53.1.tar.gz && \
@@ -113,26 +96,20 @@ RUN cd /tmp && \
     make install && \
     cd / && rm -rf /tmp/librealsense-2.53.1 /tmp/v2.53.1.tar.gz
 
-# Build PX4 SITL (strip any stray opencv refs from the setup script first)
+# Build Micro-XRCE-DDS-Agent for PX4
 RUN cd /tmp && \
-    git clone https://github.com/mcgill-robotics/PX4-Autopilot.git --recursive && \
-    cd PX4-Autopilot && \
-    sed -i 's/libopencv[^ ]*//g' Tools/setup/ubuntu.sh && \
-    bash ./Tools/setup/ubuntu.sh && \
-    make px4_sitl && \
-    cd / && rm -rf /tmp/PX4-Autopilot
+    git clone -b v2.4.3 https://github.com/eProsima/Micro-XRCE-DDS-Agent.git && \
+    cd Micro-XRCE-DDS-Agent && \
+    mkdir build && cd build && \
+    cmake .. && \
+    make -j"$(nproc)" && \
+    make install && \
+    ldconfig /usr/local/lib/ && \
+    cd / && rm -rf /tmp/Micro-XRCE-DDS-Agent
 
-# Install gz dev headers (OSRF repo required; runtime libs already present but headers are not)
-RUN curl -sSL https://packages.osrfoundation.org/gazebo.gpg \
-        -o /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg && \
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] \
-        http://packages.osrfoundation.org/gazebo/ubuntu-stable jammy main" \
-        > /etc/apt/sources.list.d/gazebo-stable.list && \
-    apt-get update -qq && \
-    apt-get install -y --no-install-recommends \
-        libgz-transport13-dev \
-        libgz-msgs10-dev \
-    && rm -rf /var/lib/apt/lists/*
+# Initialize rosdep
+RUN rosdep init 2>/dev/null || true && \
+    rosdep update
 
 # Clone and build ROS workspace
 RUN cd /tmp && \
