@@ -136,7 +136,7 @@ RUN curl -sSL https://packages.osrfoundation.org/gazebo.gpg \
 
 # Clone and build ROS workspace
 RUN cd /tmp && \
-    git clone https://github.com/mcgill-robotics/drone-capstone -b ros2hotfix_gazebofail && \
+    git clone https://github.com/mcgill-robotics/drone-capstone && \
     source /opt/ros/humble/setup.bash && \
     cd drone-capstone/ros2_ws && \
     colcon build && \
