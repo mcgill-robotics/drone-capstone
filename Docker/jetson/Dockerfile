@@ -29,18 +29,24 @@ RUN apt-get update -qq && \
         python3-pip \
         wget \
         curl \
-        udev \
+        udev
+RUN apt-get update -qq && \
+    apt-get install -y -qq --no-install-recommends \
         libusb-1.0-0-dev \
         libusb-1.0-0 \
         libssl-dev \
         libgtk-3-dev \
         libgtk-3-0 \
         libglfw3-dev \
-        libglfw3 \
+        libglfw3
+RUN apt-get update -qq && \
+    apt-get install -y -qq --no-install-recommends \
         python3-colcon-common-extensions \
         python3-rosdep \
         python3-vcstool \
-        python3-rospkg-modules \
+        python3-rospkg-modules
+RUN apt-get update -qq && \
+    apt-get install -y -qq --no-install-recommends \
         ros-${ROS_DISTRO}-ament-cmake-python \
         ros-${ROS_DISTRO}-rosidl-default-generators \
         ros-${ROS_DISTRO}-rosidl-generator-cpp \
@@ -48,7 +54,9 @@ RUN apt-get update -qq && \
         ros-${ROS_DISTRO}-ament-cmake \
         ros-${ROS_DISTRO}-rosidl-cmake \
         ros-${ROS_DISTRO}-ament-lint-auto \
-        ros-${ROS_DISTRO}-ament-lint-common \
+        ros-${ROS_DISTRO}-ament-lint-common
+RUN apt-get update -qq && \
+    apt-get install -y -qq --no-install-recommends \
         ros-${ROS_DISTRO}-mavros-msgs \
         ros-${ROS_DISTRO}-diagnostic-updater \
         ros-${ROS_DISTRO}-message-filters \
@@ -59,8 +67,9 @@ RUN apt-get update -qq && \
         ros-${ROS_DISTRO}-ament-cmake-* \
         ros-${ROS_DISTRO}-rclcpp-components \
         ros-${ROS_DISTRO}-tf2-* \
-        ros-${ROS_DISTRO}-stereo-msgs \
-        ros-${ROS_DISTRO}-librealsense2 \
+        ros-${ROS_DISTRO}-stereo-msgs
+RUN apt-get update -qq && \
+    apt-get install -y -qq --no-install-recommends \
         ros-${ROS_DISTRO}-nav-msgs \
         ros-${ROS_DISTRO}-ros-environment \
         ros-${ROS_DISTRO}-launch-ros \
@@ -72,7 +81,6 @@ RUN apt-get update -qq && \
         ros-${ROS_DISTRO}-camera-ros \
         ros-${ROS_DISTRO}-image-transport-plugins \
         ros-${ROS_DISTRO}-xacro \
-        ros-${ROS_DISTRO}-ros-gz \
     && rm -rf /var/lib/apt/lists/*
 
 # Install required pip packages
