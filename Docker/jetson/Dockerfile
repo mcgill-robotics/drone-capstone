@@ -16,9 +16,10 @@ RUN rm -rf /root/.config/pip || true
 RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
     -o /usr/share/keyrings/ros-archive-keyring.gpg
 
-# Install apt packages
+# Install apt packages — NOTE: no ros-humble-librealsense2, we build 2.53.1 from source
 RUN apt-get update -qq && \
-    apt-get remove -y opencv-dev opencv-libs opencv-main 'libopencv*' || true && \
+    apt-get remove -y opencv-dev opencv-libs opencv-main 'libopencv*' \
+        ros-humble-librealsense2 'librealsense2*' || true && \
     apt-get autoremove -y && \
     apt-get install -y -qq --no-install-recommends \
         -o Dpkg::Options::="--force-overwrite" \
@@ -63,7 +64,6 @@ RUN apt-get update -qq && \
         ros-${ROS_DISTRO}-rclcpp-components \
         ros-${ROS_DISTRO}-tf2-* \
         ros-${ROS_DISTRO}-stereo-msgs \
-        ros-${ROS_DISTRO}-librealsense2 \
         ros-${ROS_DISTRO}-nav-msgs \
         ros-${ROS_DISTRO}-ros-environment \
         ros-${ROS_DISTRO}-launch-ros \
@@ -96,7 +96,7 @@ RUN cd /tmp && \
 RUN rosdep init 2>/dev/null || true && \
     rosdep update
 
-# Build librealsense 2.53.1 (T265 last working version)
+# Build librealsense 2.53.1 from source and register it as the system library
 RUN cd /tmp && \
     wget https://github.com/IntelRealSense/librealsense/archive/refs/tags/v2.53.1.tar.gz && \
     tar -xzf v2.53.1.tar.gz && \
@@ -111,9 +111,25 @@ RUN cd /tmp && \
         -DBUILD_PYTHON_BINDINGS=OFF && \
     make -j"$(nproc)" && \
     make install && \
+    echo "/usr/local/lib" > /etc/ld.so.conf.d/realsense-local.conf && \
+    ldconfig && \
     cd / && rm -rf /tmp/librealsense-2.53.1 /tmp/v2.53.1.tar.gz
 
-# Build PX4 SITL (strip any stray opencv refs from the setup script first)
+# Build realsense2_camera ROS wrapper from source against our 2.53.1
+# Tag 4.51.1 is the last release that supports librealsense 2.53.x
+RUN cd /tmp && \
+    git clone https://github.com/IntelRealSense/realsense-ros.git \
+        --branch 4.51.1 --depth 1 && \
+    source /opt/ros/humble/setup.bash && \
+    cd realsense-ros && \
+    colcon build \
+        --install-base /opt/realsense_ros \
+        --cmake-args \
+            -DCMAKE_BUILD_TYPE=Release \
+            -Drealsense2_DIR=/usr/local/lib/cmake/realsense2 && \
+    cd / && rm -rf /tmp/realsense-ros
+
+# Build PX4 SITL
 RUN cd /tmp && \
     git clone https://github.com/mcgill-robotics/PX4-Autopilot.git --recursive && \
     cd PX4-Autopilot && \
@@ -122,7 +138,7 @@ RUN cd /tmp && \
     make px4_sitl && \
     cd / && rm -rf /tmp/PX4-Autopilot
 
-# Install gz dev headers (OSRF repo required; runtime libs already present but headers are not)
+# Install gz dev headers
 RUN curl -sSL https://packages.osrfoundation.org/gazebo.gpg \
         -o /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] \
@@ -134,29 +150,26 @@ RUN curl -sSL https://packages.osrfoundation.org/gazebo.gpg \
         libgz-msgs10-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Clone and build ROS workspace
+# Clone and build ROS workspace — realsense-ros excluded via .colconignore or absent from src
 RUN cd /tmp && \
     git clone https://github.com/mcgill-robotics/drone-capstone -b ros2hotfix_gazebofail && \
     source /opt/ros/humble/setup.bash && \
+    source /opt/realsense_ros/setup.bash && \
     cd drone-capstone/ros2_ws && \
+    rm -rf src/realsense-ros && \
     colcon build && \
     source install/setup.bash && \
     cd / && rm -rf /tmp/drone-capstone
 
-# udev rules for RealSense cameras
-RUN echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0b37", MODE="0666", GROUP="plugdev"' > /etc/udev/rules.d/99-realsense-libusb.rules && \
-echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0ad1", MODE="0666", GROUP="plugdev"' >> /etc/udev/rules.d/99-realsense-libusb.rules && \
-echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0ad2", MODE="0666", GROUP="plugdev"' >> /etc/udev/rules.d/99-realsense-libusb.rules && \
-echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0ad3", MODE="0666", GROUP="plugdev"' >> /etc/udev/rules.d/99-realsense-libusb.rules && \
-echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0ad4", MODE="0666", GROUP="plugdev"' >> /etc/udev/rules.d/99-realsense-libusb.rules && \
-echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0b07", MODE="0666", GROUP="plugdev"' >> /etc/udev/rules.d/99-realsense-libusb.rules && \
-echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", ATTRS{idProduct}=="2150", MODE="0666", GROUP="plugdev"' >> /etc/udev/rules.d/99-realsense-libusb.rules
+# udev rules (correct vendor IDs for T265)
+RUN curl -sSL https://raw.githubusercontent.com/IntelRealSense/librealsense/v2.53.1/config/99-realsense-libusb.rules \
+    -o /etc/udev/rules.d/99-realsense-libusb.rules
 
-# Use bash for later RUNs
 SHELL ["/bin/bash", "-c"]
 
 # Shell setup
 RUN echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc && \
+    echo "source /opt/realsense_ros/setup.bash" >> ~/.bashrc && \
     echo "source /drone-capstone/ros2_ws/install/setup.bash" >> ~/.bashrc && \
     echo "export ROS_DOMAIN_ID=0" >> ~/.bashrc && \
     echo "export RMW_IMPLEMENTATION=rmw_fastrtps_cpp" >> ~/.bashrc && \
