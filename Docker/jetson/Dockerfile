@@ -61,7 +61,6 @@ RUN apt-get update -qq && \
         ros-${ROS_DISTRO}-diagnostic-updater \
         ros-${ROS_DISTRO}-message-filters \
         ros-${ROS_DISTRO}-pluginlib \
-        ros-${ROS_DISTRO}-image-transport \
         ros-${ROS_DISTRO}-yaml-cpp-vendor \
         ros-${ROS_DISTRO}-camera-calibration-parsers \
         ros-${ROS_DISTRO}-ament-cmake-* \
