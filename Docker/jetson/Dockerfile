@@ -284,8 +284,6 @@ RUN cd /tmp && \
 #
 #    /usr/local/bin/xrce_agent_serial.sh /dev/ttyTHS1 921600
 #
-COPY xrce_agent_serial.sh /usr/local/bin/xrce_agent_serial.sh
-RUN chmod +x /usr/local/bin/xrce_agent_serial.sh
 
 # ── PX4 SITL ────────────────────────────────────────────────
 RUN cd / && \
@@ -351,7 +349,6 @@ alias jp='cd /PX4-Autopilot && \
 
 # Micro-XRCE-DDS-Agent over serial with auto-reconnect
 # Usage:  xrce_serial [device] [baudrate]
-alias xrce_serial='xrce_agent_serial.sh /dev/ttyTHS1 921600'
 
 # Precision landing mission
 alias mission='cd /drone-capstone/ros2_ws && source install/setup.bash && \
@@ -368,7 +365,5 @@ tmux
 EOF
 
 # ── Entrypoint ──────────────────────────────────────────────
-COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
-ENTRYPOINT ["/entrypoint.sh"]
 CMD ["bash"]
