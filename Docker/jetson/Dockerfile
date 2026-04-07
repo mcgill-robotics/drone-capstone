@@ -100,6 +100,10 @@ RUN cd /tmp && \
          -O opencv_contrib.tar.gz && \
     tar -xzf opencv.tar.gz && \
     tar -xzf opencv_contrib.tar.gz && \
+    # Remove any stale opencv4 include dir left by the purge step —
+    # if it exists as a plain file or has wrong permissions,
+    # "ninja install" will fail trying to mkdir inside it.
+    rm -rf /usr/local/include/opencv4 && \
     mkdir -p opencv-${OPENCV_VERSION}/build && \
     cd opencv-${OPENCV_VERSION}/build && \
     cmake .. \
