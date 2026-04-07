@@ -1,33 +1,61 @@
 # ============================================================
 #  McGill Robotics — Drone Capstone
-#  Clean build from L4T base: no pre-installed OpenCV / ROS
-#  Target: JetPack 6.1  (L4T 36.4.0, CUDA 12.6, aarch64)
+#  Base: dustynv ROS Humble + JetPack 6.1 (L4T 36.4.0, aarch64)
+#  Strategy: purge all pre-installed OpenCV and librealsense,
+#            then rebuild everything from source so versions
+#            are pinned and consistent.
 # ============================================================
-FROM nvcr.io/nvidia/l4t-base:r36.4.0
+FROM dustynv/ros:humble-desktop-l4t-r36.4.0
 
 # ── Environment ─────────────────────────────────────────────
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     ROS_DISTRO=humble \
-    # librealsense 2.53.1 is the last version with T265 support
+    # librealsense 2.53.1 — last version with T265 support
     LIBREALSENSE_VERSION=2.53.1 \
-    # OpenCV 4.8.1 – stable, ROS-compatible, CUDA-enabled
+    # OpenCV 4.8.1 — stable, ROS-compatible, CUDA-enabled
     OPENCV_VERSION=4.8.1 \
     # Micro-XRCE-DDS-Agent tag
     XRCE_DDS_TAG=v2.4.3 \
-    # All from-source installs go here so they win over any stray apt paths
+    # All from-source installs land here — takes precedence over /usr/lib
     CMAKE_INSTALL_PREFIX=/usr/local
 
-# ── Nuke every OpenCV package that might be on the base image ──
-RUN dpkg -l | grep -i opencv | awk '{print $2}' | xargs apt-get purge -y 2>/dev/null || true && \
-    apt-get autoremove -y 2>/dev/null || true && \
-    rm -f /usr/lib/aarch64-linux-gnu/libopencv* \
-          /usr/lib/aarch64-linux-gnu/pkgconfig/opencv* \
-          /usr/local/lib/libopencv* \
-          /usr/local/lib/pkgconfig/opencv* \
-          /usr/include/opencv2 2>/dev/null || true && \
-    ldconfig
+# ── Nuke every OpenCV and librealsense package from the base image ──
+#
+#  dustynv ships OpenCV and possibly librealsense pre-built. We have to
+#  remove them completely before installing our own versions, otherwise
+#  apt deps or ldconfig will silently prefer the wrong .so at runtime.
+#
+#  --allow-change-held-packages: dustynv marks some packages as held.
+#  We force-remove them anyway because we're replacing with source builds.
+RUN apt-get update -qq && \
+    # Collect everything opencv and librealsense related
+    OPENCV_PKGS=$(dpkg -l | grep -i opencv | awk '{print $2}' | tr '\n' ' ') && \
+    RS_PKGS=$(dpkg -l | grep -i 'librealsense\|realsense' | awk '{print $2}' | tr '\n' ' ') && \
+    if [ -n "$OPENCV_PKGS" ]; then \
+        apt-get purge -y --allow-change-held-packages $OPENCV_PKGS || true; \
+    fi && \
+    if [ -n "$RS_PKGS" ]; then \
+        apt-get purge -y --allow-change-held-packages $RS_PKGS || true; \
+    fi && \
+    # Also purge the ros-humble wrappers that depend on those libs
+    apt-get purge -y --allow-change-held-packages \
+        ros-humble-librealsense2 \
+        ros-humble-realsense2-camera \
+        ros-humble-realsense2-description \
+        2>/dev/null || true && \
+    apt-get autoremove -y && \
+    # Belt-and-suspenders: remove any stray .so files left behind
+    find /usr/lib /usr/local/lib -name 'libopencv*' -delete 2>/dev/null || true && \
+    find /usr/lib /usr/local/lib -name 'librealsense*' -delete 2>/dev/null || true && \
+    find /usr/include -maxdepth 1 -name 'opencv*' -exec rm -rf {} + 2>/dev/null || true && \
+    find /usr/local/include -maxdepth 1 -name 'opencv*' -exec rm -rf {} + 2>/dev/null || true && \
+    # Remove any stale cmake config files that would make find_package() pick the wrong version
+    find /usr /usr/local -name 'OpenCVConfig*.cmake' -delete 2>/dev/null || true && \
+    find /usr /usr/local -name 'realsense2Config*.cmake' -delete 2>/dev/null || true && \
+    ldconfig && \
+    rm -rf /var/lib/apt/lists/*
 
 # ── Base system deps ─────────────────────────────────────────
 RUN apt-get update -qq && apt-get install -y --no-install-recommends \
@@ -163,23 +191,13 @@ RUN for RULE in \
         'SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", ATTRS{idProduct}=="2150", MODE="0666", GROUP="plugdev"'; \
     do echo "$RULE"; done > /etc/udev/rules.d/99-realsense-libusb.rules
 
-# ── ROS 2 Humble (official OSRF debs, no ros-humble-librealsense2) ──
-RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
-        -o /usr/share/keyrings/ros-archive-keyring.gpg && \
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] \
-        http://packages.ros.org/ros2/ubuntu jammy main" \
-        > /etc/apt/sources.list.d/ros2.list && \
-    apt-get update -qq && \
+# ── Additional ROS 2 Humble packages ────────────────────────
+#    dustynv already ships ros-humble-ros-base and most core packages.
+#    We just add what's missing. We explicitly do NOT install:
+#      ros-humble-librealsense2 / ros-humble-realsense2-*  (purged above,
+#      replaced by our source build)
+RUN apt-get update -qq && \
     apt-get install -y --no-install-recommends \
-        ros-humble-ros-base \
-        ros-humble-ament-cmake \
-        ros-humble-ament-cmake-python \
-        ros-humble-rosidl-default-generators \
-        ros-humble-rosidl-generator-cpp \
-        ros-humble-rosidl-generator-py \
-        ros-humble-rosidl-cmake \
-        ros-humble-ament-lint-auto \
-        ros-humble-ament-lint-common \
         ros-humble-mavros-msgs \
         ros-humble-diagnostic-updater \
         ros-humble-message-filters \
@@ -209,7 +227,6 @@ RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
         python3-rosdep \
         python3-vcstool \
         python3-rospkg-modules \
-        python3-catkin-pkg \
     && rm -rf /var/lib/apt/lists/*
 
 # Gazebo Harmonic dev headers (runtime libs come with ros-humble-ros-gz)
