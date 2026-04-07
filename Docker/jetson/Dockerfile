@@ -322,68 +322,19 @@ RUN git clone https://github.com/mcgill-robotics/drone-capstone /drone-capstone 
 # ── 12. Shell setup ───────────────────────────────────────────────────
 SHELL ["/bin/bash", "-c"]
 
-RUN cat >> ~/.bashrc << 'BASHRC'
-source /opt/ros/humble/setup.bash
-source /opt/realsense_ros_ws/install/setup.bash
-source /drone-capstone/ros2_ws/install/setup.bash
-export ROS_DOMAIN_ID=0
-export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
-# Our from-source libs must take precedence over anything in /usr/lib
-export LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH}
-
-# Full clean rebuild
-alias cb='cd /drone-capstone/ros2_ws && rm -rf build install log && \
-    colcon build \
-        --cmake-args \
-            -DOpenCV_DIR=/usr/local/lib/cmake/opencv4 \
-            -Drealsense2_DIR=/usr/local/lib/cmake/realsense2 \
-            -DCMAKE_BUILD_TYPE=Release && \
-    source install/setup.bash'
-
-# Incremental rebuild
-alias b='cd /drone-capstone/ros2_ws && \
-    colcon build \
-        --cmake-args \
-            -DOpenCV_DIR=/usr/local/lib/cmake/opencv4 \
-            -Drealsense2_DIR=/usr/local/lib/cmake/realsense2 \
-            -DCMAKE_BUILD_TYPE=Release && \
-    source install/setup.bash'
-
-# PX4 SITL (GUI)
-alias martin='cd /PX4-Autopilot && PX4_GZ_WORLD=apriltag make px4_sitl gz_x500_mono_cam_down NAV_DLL_ACT=0'
-
-# PX4 SITL (headless)
-alias jp='cd /PX4-Autopilot && PX4_GZ_WORLD=apriltag make px4_sitl gz_x500_mono_cam_down NAV_DLL_ACT=0 HEADLESS=1'
-
-# Micro-XRCE-DDS-Agent over serial with auto-reconnect
-# Usage: xrce_serial [device] [baud]   defaults: /dev/ttyTHS1 921600
-xrce_serial() {
-    local DEV="${1:-/dev/ttyTHS1}"
-    local BAUD="${2:-921600}"
-    echo "[xrce_serial] supervising ${DEV} @ ${BAUD} -- Ctrl-C to stop"
-    while true; do
-        while [ ! -e "${DEV}" ]; do
-            echo "[xrce_serial] waiting for ${DEV}..."; sleep 2
-        done
-        echo "[xrce_serial] launching agent"
-        MicroXRCEAgent serial -D "${DEV}" -b "${BAUD}" || true
-        echo "[xrce_serial] agent exited, retrying in 1s"
-        sleep 1
-    done
-}
-export -f xrce_serial
-
-alias mission='cd /drone-capstone/ros2_ws && source install/setup.bash && \
-    ros2 run precision_land_apriltag precision_land_apriltag_node'
-
-alias missionb='cd /drone-capstone/ros2_ws && \
-    colcon build --packages-select precision_land_apriltag && \
-    source install/setup.bash && \
-    ros2 run precision_land_apriltag precision_land_apriltag_node'
-
-alias viz='ros2 run rqt_image_view rqt_image_view --clear-config'
-
-tmux
-BASHRC
+RUN echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc && \
+    echo "source /opt/realsense_ros_ws/install/setup.bash" >> ~/.bashrc && \
+    echo "source /drone-capstone/ros2_ws/install/setup.bash" >> ~/.bashrc && \
+    echo "export ROS_DOMAIN_ID=0" >> ~/.bashrc && \
+    echo "export RMW_IMPLEMENTATION=rmw_fastrtps_cpp" >> ~/.bashrc && \
+    echo "export LD_LIBRARY_PATH=/usr/local/lib:\${LD_LIBRARY_PATH}" >> ~/.bashrc && \
+    echo "alias cb='cd /drone-capstone/ros2_ws && rm -rf build install log && colcon build --cmake-args -DOpenCV_DIR=/usr/local/lib/cmake/opencv4 -Drealsense2_DIR=/usr/local/lib/cmake/realsense2 -DCMAKE_BUILD_TYPE=Release && source install/setup.bash'" >> ~/.bashrc && \
+    echo "alias b='cd /drone-capstone/ros2_ws && colcon build --cmake-args -DOpenCV_DIR=/usr/local/lib/cmake/opencv4 -Drealsense2_DIR=/usr/local/lib/cmake/realsense2 -DCMAKE_BUILD_TYPE=Release && source install/setup.bash'" >> ~/.bashrc && \
+    echo "alias martin='cd /PX4-Autopilot && PX4_GZ_WORLD=apriltag make px4_sitl gz_x500_mono_cam_down NAV_DLL_ACT=0'" >> ~/.bashrc && \
+    echo "alias jp='cd /PX4-Autopilot && PX4_GZ_WORLD=apriltag make px4_sitl gz_x500_mono_cam_down NAV_DLL_ACT=0 HEADLESS=1'" >> ~/.bashrc && \
+    echo "alias mission='cd /drone-capstone/ros2_ws && source install/setup.bash && ros2 run precision_land_apriltag precision_land_apriltag_node'" >> ~/.bashrc && \
+    echo "alias missionb='cd /drone-capstone/ros2_ws && colcon build --packages-select precision_land_apriltag && source install/setup.bash && ros2 run precision_land_apriltag precision_land_apriltag_node'" >> ~/.bashrc && \
+    echo "alias viz='ros2 run rqt_image_view rqt_image_view --clear-config'" >> ~/.bashrc && \
+    echo "tmux" >> ~/.bashrc
 
 CMD ["bash"]
