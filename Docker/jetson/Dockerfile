@@ -228,7 +228,19 @@ RUN curl -sSL https://packages.osrfoundation.org/gazebo.gpg \
 
 # ── 8. realsense-ros from source ────────────────────────────────────
 #    4.51.1 is the last tag tested against librealsense 2.53.x.
-RUN pip3 install --upgrade pip pyros-genmsg setuptools && \
+#
+#    PIP_INDEX_URL / PIP_EXTRA_INDEX_URL: dustynv sets these to the Jetson
+#    PyPI mirror which doesn't carry pyros-genmsg or setuptools.
+#    We unset them so pip falls back to the real PyPI for these packages.
+#
+#    CMAKE_PREFIX_PATH: must include the ROS install prefix so colcon's
+#    cmake can find rosidl_default_generators and friends. Sourcing
+#    setup.bash sets AMENT_PREFIX_PATH but cmake uses CMAKE_PREFIX_PATH;
+#    we set it explicitly to be safe.
+RUN unset PIP_INDEX_URL PIP_EXTRA_INDEX_URL && \
+    pip3 install --upgrade \
+        --index-url https://pypi.org/simple \
+        pip pyros-genmsg setuptools && \
     rosdep init 2>/dev/null || true && \
     rosdep update && \
     mkdir -p /opt/realsense_ros_ws/src && \
@@ -236,9 +248,12 @@ RUN pip3 install --upgrade pip pyros-genmsg setuptools && \
     git clone --branch 4.51.1 --depth 1 \
         https://github.com/IntelRealSense/realsense-ros.git && \
     cd /opt/realsense_ros_ws && \
-    bash -c "source /opt/ros/humble/setup.bash && \
+    bash -c "\
+        source /opt/ros/humble/setup.bash && \
+        export CMAKE_PREFIX_PATH=/opt/ros/humble:\${CMAKE_PREFIX_PATH} && \
         colcon build \
             --cmake-args \
+                -DCMAKE_PREFIX_PATH=/opt/ros/humble \
                 -DOpenCV_DIR=/usr/local/lib/cmake/opencv4 \
                 -Drealsense2_DIR=/usr/local/lib/cmake/realsense2 \
                 -DCMAKE_BUILD_TYPE=Release" && \
@@ -270,11 +285,14 @@ RUN git clone --recursive https://github.com/mcgill-robotics/PX4-Autopilot.git /
 
 # ── 11. Drone capstone ROS 2 workspace ───────────────────────────────
 RUN git clone https://github.com/mcgill-robotics/drone-capstone /drone-capstone && \
-    bash -c "source /opt/ros/humble/setup.bash && \
+    bash -c "\
+        source /opt/ros/humble/setup.bash && \
         source /opt/realsense_ros_ws/install/setup.bash && \
+        export CMAKE_PREFIX_PATH=/opt/ros/humble:\${CMAKE_PREFIX_PATH} && \
         cd /drone-capstone/ros2_ws && \
         colcon build \
             --cmake-args \
+                -DCMAKE_PREFIX_PATH=/opt/ros/humble \
                 -DOpenCV_DIR=/usr/local/lib/cmake/opencv4 \
                 -Drealsense2_DIR=/usr/local/lib/cmake/realsense2 \
                 -DCMAKE_BUILD_TYPE=Release" && \
