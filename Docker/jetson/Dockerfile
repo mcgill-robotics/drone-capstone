@@ -242,6 +242,10 @@ RUN apt-get update -qq && \
         ros-humble-ament-cmake \
         ros-humble-ament-cmake-python \
         ros-humble-ament-cmake-cppcheck \
+        ros-humble-rosidl-generator-cpp \
+        ros-humble-rosidl-generator-py \
+        ros-humble-ament-cmake-cpplint \
+        ros-humble-ament-cmake-* \
     && rm -rf /var/lib/apt/lists/*
 
 RUN unset PIP_INDEX_URL PIP_EXTRA_INDEX_URL && \
