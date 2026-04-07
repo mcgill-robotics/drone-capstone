@@ -10,7 +10,12 @@ ENV DEBIAN_FRONTEND=noninteractive \
     ROS_DISTRO=humble \
     LIBREALSENSE_VERSION=2.53.1 \
     OPENCV_VERSION=4.8.1 \
-    XRCE_DDS_TAG=v2.4.3
+    XRCE_DDS_TAG=v2.4.3 \
+    PIP_INDEX_URL=https://pypi.org/simple \
+    PIP_EXTRA_INDEX_URL=
+
+# Remove Jetson pip override
+RUN rm -rf /root/.config/pip || true
 
 # ── 1. Fix the expired ROS GPG key that ships in dustynv ────────────
 #    Must be the very first step — everything else calls apt-get update.
