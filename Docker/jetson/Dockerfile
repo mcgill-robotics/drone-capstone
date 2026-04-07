@@ -303,6 +303,8 @@ RUN git clone --recursive https://github.com/mcgill-robotics/PX4-Autopilot.git /
     bash ./Tools/setup/ubuntu.sh --no-nuttx && \
     make px4_sitl
 
+RUN apt-get update && apt-get install -y libeigen3-dev
+
 # ── 11. Drone capstone ROS 2 workspace ───────────────────────────────
 RUN git clone https://github.com/mcgill-robotics/drone-capstone /drone-capstone && \
     bash -c "\
