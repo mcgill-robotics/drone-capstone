@@ -21,6 +21,20 @@ ENV DEBIAN_FRONTEND=noninteractive \
     # All from-source installs land here — takes precedence over /usr/lib
     CMAKE_INSTALL_PREFIX=/usr/local
 
+# ── Fix expired ROS GPG key (dustynv base ships a stale key) ────────
+#    This must happen before ANY apt-get update or the whole build fails.
+RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+        -o /usr/share/keyrings/ros-archive-keyring.gpg && \
+    # Rewrite the source entry to use the signed-by keyring format
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] \
+        http://packages.ros.org/ros2/ubuntu jammy main" \
+        > /etc/apt/sources.list.d/ros2.list && \
+    # Remove any other ros2 source files that might reference the old key
+    find /etc/apt/sources.list.d/ -name '*.list' \
+        ! -name 'ros2.list' \
+        -exec grep -l 'packages.ros.org' {} \; \
+        | xargs rm -f 2>/dev/null || true
+
 # ── Nuke every OpenCV and librealsense package from the base image ──
 #
 #  dustynv ships OpenCV and possibly librealsense pre-built. We have to
@@ -276,15 +290,6 @@ RUN cd /tmp && \
     ldconfig /usr/local/lib/ && \
     cd / && rm -rf /tmp/Micro-XRCE-DDS-Agent
 
-# ── Serial reconnect supervisor for Micro-XRCE-DDS-Agent ────
-#
-#  The agent exits when the serial port disappears (FC reboot, cable wiggle).
-#  This wrapper loops forever, waiting for the device node before (re)launching
-#  the agent.  Call it instead of MicroXRCEAgent directly:
-#
-#    /usr/local/bin/xrce_agent_serial.sh /dev/ttyTHS1 921600
-#
-
 # ── PX4 SITL ────────────────────────────────────────────────
 RUN cd / && \
     git clone --recursive https://github.com/mcgill-robotics/PX4-Autopilot.git && \
@@ -346,9 +351,6 @@ alias martin='cd /PX4-Autopilot && \
 # PX4 SITL (headless)
 alias jp='cd /PX4-Autopilot && \
     PX4_GZ_WORLD=apriltag make px4_sitl gz_x500_mono_cam_down NAV_DLL_ACT=0 HEADLESS=1'
-
-# Micro-XRCE-DDS-Agent over serial with auto-reconnect
-# Usage:  xrce_serial [device] [baudrate]
 
 # Precision landing mission
 alias mission='cd /drone-capstone/ros2_ws && source install/setup.bash && \
